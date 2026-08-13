@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { apiFetch } from '../utils/api';
 import { 
   Truck, MapPin, CheckCircle2, Clock, Milk, User, 
   RefreshCw, AlertCircle, ShieldCheck, DollarSign, Calculator,
@@ -7,7 +8,7 @@ import {
 } from 'lucide-react';
 
 export default function DeliveryDashboard() {
-  const { user, activeTab } = useAuth();
+  const { user, activeTab, updateUserBalance } = useAuth();
   const [dashboardData, setDashboardData] = useState(null);
   const [agentProfile, setAgentProfile] = useState(null);
   const [transactions, setTransactions] = useState([]);
@@ -30,12 +31,15 @@ export default function DeliveryDashboard() {
   const fetchAgentDashboard = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/delivery/dashboard?agentId=${user?.id}`);
-      const data = await res.json();
+      const data = await apiFetch(`/api/delivery/dashboard?agentId=${user?.id}`);
       if (data.success) {
         setDashboardData(data);
         setAgentProfile(data.agent);
         setTransactions(data.transactions || []);
+
+        if (data.agent && data.agent.balance !== undefined) {
+          updateUserBalance(data.agent.balance);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -46,7 +50,7 @@ export default function DeliveryDashboard() {
 
   useEffect(() => {
     fetchAgentDashboard();
-  }, [user]);
+  }, [user?.id]);
 
   // Live calculation preview
   const fatVal = parseFloat(testedFat) || 0;
@@ -57,7 +61,7 @@ export default function DeliveryDashboard() {
   const calculatedRate = Math.max(35, Math.round(baseRate + (fatDiff * 6) + (snfDiff * 4)));
   const calculatedTotal = activePickup ? Math.round(activePickup.liters * calculatedRate) : 0;
 
-  // Quality Test & Credit Money
+  // Quality Test & Credit Farmer & Agent Money
   const handleTestAndCollect = async (e) => {
     e.preventDefault();
     if (!activePickup) return;
@@ -66,9 +70,8 @@ export default function DeliveryDashboard() {
     setErrorMsg('');
 
     try {
-      const res = await fetch('/api/delivery/test-and-collect', {
+      const data = await apiFetch('/api/delivery/test-and-collect', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           pickupId: activePickup.id,
           testedFat,
@@ -78,11 +81,13 @@ export default function DeliveryDashboard() {
           agentId: user?.id
         })
       });
-      const data = await res.json();
 
       if (data.success) {
         setMsg(data.message);
         setActivePickup(null);
+        if (data.updatedAgentBalance !== undefined) {
+          updateUserBalance(data.updatedAgentBalance);
+        }
         fetchAgentDashboard();
       } else {
         setErrorMsg(data.message || 'Quality verification failed');
@@ -97,12 +102,10 @@ export default function DeliveryDashboard() {
   const handleUpdateStatus = async (taskId, newStatus, type) => {
     setMsg('');
     try {
-      const res = await fetch('/api/delivery/update-status', {
+      const data = await apiFetch('/api/delivery/update-status', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ taskId, status: newStatus, type, agentId: user?.id })
       });
-      const data = await res.json();
       if (data.success) {
         setMsg(`Status updated to ${newStatus}`);
         fetchAgentDashboard();
@@ -117,22 +120,23 @@ export default function DeliveryDashboard() {
     e.preventDefault();
     setPayoutMsg('');
     try {
-      const res = await fetch('/api/delivery/payout', {
+      const data = await apiFetch('/api/delivery/payout', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           agentId: user?.id,
           amount: payoutAmount
         })
       });
-      const data = await res.json();
       if (data.success) {
         setPayoutMsg(data.message);
+        if (data.remainingBalance !== undefined) {
+          updateUserBalance(data.remainingBalance);
+        }
         setTimeout(() => {
           setShowPayoutModal(false);
           setPayoutMsg('');
           fetchAgentDashboard();
-        }, 1500);
+        }, 1200);
       } else {
         setPayoutMsg(data.message || 'Payout failed');
       }
@@ -150,12 +154,12 @@ export default function DeliveryDashboard() {
     );
   }
 
-  const currentBalance = agentProfile?.balance || user?.balance || 3450.00;
+  const currentBalance = user?.balance !== undefined ? user.balance : (agentProfile?.balance || 0);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem', maxWidth: '1150px', margin: '0 auto' }}>
       
-      {/* Top Banner with Available Money Prominently Highlighted */}
+      {/* Top Banner with Available Money */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(217, 119, 6, 0.15) 0%, rgba(245, 158, 11, 0.05) 100%)',
         border: '1px solid var(--accent-amber)',
@@ -177,7 +181,7 @@ export default function DeliveryDashboard() {
           </p>
         </div>
 
-        {/* Current Available Money Card */}
+        {/* Current Available Money */}
         <div style={{
           background: 'var(--bg-card)',
           border: '1px solid var(--border-color)',
@@ -188,7 +192,7 @@ export default function DeliveryDashboard() {
         }}>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>CURRENT AVAILABLE MONEY</div>
           <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '2px' }}>
-            ₹{currentBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
             Commission Earned: ₹50 / delivery
@@ -340,11 +344,10 @@ export default function DeliveryDashboard() {
           
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.25rem' }}>
             
-            {/* Balance Card */}
             <div className="card" style={{ background: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)', color: '#FFFFFF' }}>
               <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>Current Available Earnings</div>
               <div style={{ fontSize: '2.25rem', fontWeight: 800, margin: '0.5rem 0' }}>
-                ₹{currentBalance.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <button
                 onClick={() => { setPayoutAmount(String(currentBalance)); setShowPayoutModal(true); }}
@@ -365,7 +368,6 @@ export default function DeliveryDashboard() {
               </button>
             </div>
 
-            {/* Total Deliveries Completed */}
             <div className="card">
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Completed Deliveries</div>
               <div style={{ fontSize: '1.8rem', fontWeight: 800, margin: '0.4rem 0', color: 'var(--text-main)' }}>
@@ -376,7 +378,6 @@ export default function DeliveryDashboard() {
               </div>
             </div>
 
-            {/* Payout Bank Card */}
             <div className="card">
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Linked Payout Bank Account</div>
               <div style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0.4rem 0', color: 'var(--text-main)' }}>
@@ -389,7 +390,6 @@ export default function DeliveryDashboard() {
 
           </div>
 
-          {/* Delivery Commission Transactions Table */}
           <div className="card">
             <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1rem' }}>Delivery Fee & Payout History</h3>
             <div style={{ overflowX: 'auto' }}>
@@ -484,10 +484,8 @@ export default function DeliveryDashboard() {
       {/* Quality Testing Modal */}
       {activePickup && (
         <div style={{
-          position: 'fixed',
-          top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.65)',
-          backdropFilter: 'blur(6px)',
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           zIndex: 200, padding: '1rem'
         }}>

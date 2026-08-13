@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { apiFetch } from '../utils/api';
 import { 
   Milk, User, Lock, Mail, MapPin, Building, ArrowRight, 
-  Eye, EyeOff, ShieldCheck, CheckCircle2, Truck, Navigation 
+  Eye, EyeOff, ShieldCheck, CheckCircle2, Truck, Navigation, Sparkles, Zap 
 } from 'lucide-react';
 
 export default function AuthPage() {
@@ -13,8 +14,8 @@ export default function AuthPage() {
   // Form Fields
   const [formData, setFormData] = useState({
     name: '',
-    email: '',
-    password: '',
+    email: 'farmer@healthymilk.com',
+    password: 'password123',
     confirmPassword: '',
     farmName: '',
     address: '',
@@ -27,6 +28,52 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Handle Role Switch with Auto-filled Demo Email for instant convenience
+  const handleRoleChange = (newRole) => {
+    setRole(newRole);
+    setErrorMsg('');
+    setSuccessMsg('');
+    const demoEmail = newRole === 'farmer' 
+      ? 'farmer@healthymilk.com' 
+      : newRole === 'agent' 
+      ? 'agent@healthymilk.com' 
+      : 'consumer@healthymilk.com';
+
+    setFormData(prev => ({
+      ...prev,
+      email: demoEmail,
+      password: 'password123'
+    }));
+  };
+
+  // Instant Quick Sign In Helper
+  const handleQuickLogin = async (targetRole, targetEmail) => {
+    setLoading(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    setRole(targetRole);
+
+    try {
+      const data = await apiFetch('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: targetEmail, password: 'password123' })
+      });
+
+      if (data.success && data.user) {
+        setSuccessMsg(`Welcome back, ${data.user.name}!`);
+        setTimeout(() => {
+          loginUser(data.user, data.token);
+        }, 300);
+      } else {
+        setErrorMsg(data.message || 'Quick login failed.');
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -55,23 +102,21 @@ export default function AuthPage() {
     const endpoint = isSignup ? '/api/auth/signup' : '/api/auth/login';
     const payload = isSignup 
       ? { ...formData, role }
-      : { email: formData.email, password: formData.password, role };
+      : { email: formData.email.trim(), password: formData.password, role };
 
     try {
-      const res = await fetch(endpoint, {
+      const data = await apiFetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await res.json();
 
-      if (data.success) {
+      if (data.success && data.user) {
         setSuccessMsg(data.message || 'Authentication successful!');
         setTimeout(() => {
           loginUser(data.user, data.token);
-        }, 500);
+        }, 300);
       } else {
-        setErrorMsg(data.message || 'Authentication failed.');
+        setErrorMsg(data.message || 'Authentication failed. Please check credentials.');
       }
     } catch (err) {
       setErrorMsg('Server connection error. Please verify backend server is running.');
@@ -91,7 +136,7 @@ export default function AuthPage() {
     }}>
       <div style={{
         width: '100%',
-        maxWidth: '480px',
+        maxWidth: '500px',
         background: 'var(--bg-card)',
         border: '1px solid var(--border-color)',
         borderRadius: '24px',
@@ -101,7 +146,7 @@ export default function AuthPage() {
       }}>
         
         {/* Brand Identity Header */}
-        <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+        <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
           <div style={{
             width: '56px',
             height: '56px',
@@ -124,13 +169,79 @@ export default function AuthPage() {
           </p>
         </div>
 
+        {/* Instant 1-Click Quick Access Shortcuts */}
+        {!isSignup && (
+          <div style={{
+            background: 'var(--bg-primary)',
+            border: '1px solid var(--border-color)',
+            borderRadius: '16px',
+            padding: '1rem',
+            marginBottom: '1.5rem',
+            textAlign: 'center'
+          }}>
+            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
+              <Zap size={15} color="var(--accent-amber)" /> 1-Click Instant Role Sign In
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+              <button
+                type="button"
+                onClick={() => handleQuickLogin('farmer', 'farmer@healthymilk.com')}
+                disabled={loading}
+                style={{
+                  padding: '0.55rem 0.35rem',
+                  borderRadius: '10px',
+                  background: 'var(--accent-emerald-light)',
+                  color: 'var(--accent-emerald)',
+                  fontWeight: 700,
+                  fontSize: '0.76rem',
+                  border: '1px solid rgba(16, 185, 129, 0.3)'
+                }}
+              >
+                🌾 Farmer
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickLogin('agent', 'agent@healthymilk.com')}
+                disabled={loading}
+                style={{
+                  padding: '0.55rem 0.35rem',
+                  borderRadius: '10px',
+                  background: 'var(--accent-amber-light)',
+                  color: 'var(--accent-amber)',
+                  fontWeight: 700,
+                  fontSize: '0.76rem',
+                  border: '1px solid rgba(245, 158, 11, 0.3)'
+                }}
+              >
+                🚚 Delivery Agent
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickLogin('consumer', 'consumer@healthymilk.com')}
+                disabled={loading}
+                style={{
+                  padding: '0.55rem 0.35rem',
+                  borderRadius: '10px',
+                  background: 'var(--accent-blue-light)',
+                  color: 'var(--accent-blue)',
+                  fontWeight: 700,
+                  fontSize: '0.76rem',
+                  border: '1px solid rgba(37, 99, 235, 0.3)'
+                }}
+              >
+                🥛 Consumer
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Tab Switcher: Login / Signup */}
         <div style={{
           display: 'flex',
           background: 'var(--bg-primary)',
           borderRadius: '12px',
           padding: '4px',
-          marginBottom: '1.75rem',
+          marginBottom: '1.5rem',
           border: '1px solid var(--border-color)'
         }}>
           <button
@@ -212,7 +323,7 @@ export default function AuthPage() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
               <button
                 type="button"
-                onClick={() => setRole('farmer')}
+                onClick={() => handleRoleChange('farmer')}
                 style={{
                   padding: '0.65rem 0.4rem',
                   borderRadius: '12px',
@@ -228,7 +339,7 @@ export default function AuthPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setRole('consumer')}
+                onClick={() => handleRoleChange('consumer')}
                 style={{
                   padding: '0.65rem 0.4rem',
                   borderRadius: '12px',
@@ -244,7 +355,7 @@ export default function AuthPage() {
               </button>
               <button
                 type="button"
-                onClick={() => setRole('agent')}
+                onClick={() => handleRoleChange('agent')}
                 style={{
                   padding: '0.65rem 0.4rem',
                   borderRadius: '12px',

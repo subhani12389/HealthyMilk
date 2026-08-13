@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "name": "healthymilk-api",
   "builds": [
     {
       "src": "src/server.js",

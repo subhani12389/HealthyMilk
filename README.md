@@ -1,38 +1,31 @@
 # 🥛 HealthyMilk
 
-**HealthyMilk** is a full-stack web application designed to connect **farmers, consumers, and delivery agents** for efficient and reliable fresh milk distribution. The platform streamlines milk ordering, delivery management, and communication between all stakeholders.
+**HealthyMilk** is a full-stack web application designed to connect **farmers, consumers, and delivery agents** for efficient and reliable fresh milk distribution. The platform streamlines milk ordering, delivery management, and real-time communication between all stakeholders.
 
 ---
 
 ## ✨ Features
 
 ### 👨‍🌾 Farmer Portal
-
-* Manage milk availability
-* Update product details
-* Track incoming orders
+* Manage milk volume & batch requests
+* On-site Fat % and SNF % quality tracking
+* Real-time balance and instant bank payout withdrawals
+* Digital QR code traceability certificates for milk batches
 
 ### 🛒 Consumer Portal
-
-* Browse available milk products
-* Place and track orders
-* Receive delivery notifications
+* Live doorstep milk delivery status tracking & ETA
+* Flexible subscription management (Pause/Resume, daily quantity adjust, renew plan)
+* 100% Organic purity verification certificates & farm origin tracking
 
 ### 🚚 Delivery Agent Portal
-
-* View assigned deliveries
-* Update delivery status
-* Manage delivery schedules
+* On-site quality testing (Lactometer, Fat %, SNF %) that auto-credits farmer accounts
+* ₹50 commission fee credited per verified pickup and doorstep delivery
+* Direct agent bank withdrawal requests
 
 ### 🔐 Authentication & Authorization
-
-* Secure user registration and login
+* Secure user registration and login with JWT session support
+* 1-Click Quick Access role login buttons for instant demo evaluation
 * Role-based access control (Farmer / Consumer / Delivery Agent)
-
-### 📊 Dashboard
-
-* Personalized dashboard for each role
-* Order and delivery insights
 
 ---
 
@@ -40,9 +33,9 @@
 
 ```text
 HealthyMilk/
-├── backend/      # Express.js API and server
-├── frontend/     # React + Vite client application
-└── README.md
+├── backend/      # Express.js API, store, and Supabase client
+├── frontend/     # React + Vite application (Tailwind / Custom CSS)
+└── vercel.json   # Monorepo deployment config
 ```
 
 ---
@@ -53,228 +46,46 @@ HealthyMilk/
 | -------------- | ------------------------------------- |
 | Frontend       | React, Vite, JavaScript, Tailwind CSS |
 | Backend        | Node.js, Express.js                   |
-| Database       | MongoDB                               |
+| Database       | Supabase / In-Memory Store            |
 | Authentication | JWT (JSON Web Token)                  |
 | Deployment     | Vercel                                |
 
 ---
 
-## 📋 Prerequisites
+## 🚀 Live Deployment Links
 
-Make sure the following are installed on your system:
-
-* **Node.js 16+**
-* **npm** or **yarn**
-* **MongoDB** (local or cloud instance such as MongoDB Atlas)
+- **Frontend App**: [https://frontend-72pngukxc-shaiks-projects-a7470d9a.vercel.app](https://frontend-72pngukxc-shaiks-projects-a7470d9a.vercel.app)
+- **Backend Production API**: [https://backend-two-alpha-12.vercel.app](https://backend-two-alpha-12.vercel.app)
 
 ---
 
-## 🚀 Getting Started
+## 💻 Local Setup & Development
 
 ### 1. Clone the Repository
-
 ```bash
 git clone https://github.com/subhani12389/HealthyMilk.git
 cd HealthyMilk
 ```
 
----
-
-## ⚙️ Backend Setup
-
+### 2. Backend Setup
 ```bash
 cd backend
 npm install
-```
-
-Create a `.env` file inside the `backend` directory:
-
-```env
-PORT=5000
-DATABASE_URL=your_mongodb_connection_string
-JWT_SECRET=your_secret_key
-```
-
-Start the backend server:
-
-```bash
 npm run dev
 ```
+*API will run at http://localhost:5000*
 
-The API will run at **http://localhost:5000**
-
----
-
-## 💻 Frontend Setup
-
-Open a new terminal:
-
+### 3. Frontend Setup
 ```bash
 cd frontend
 npm install
-```
-
-Create a `.env` file inside the `frontend` directory:
-
-```env
-VITE_API_URL=http://localhost:5000
-```
-
-Start the frontend development server:
-
-```bash
 npm run dev
 ```
-
-The frontend will run at **http://localhost:5173**
-
----
-
-## 🧪 Available Scripts
-
-### Backend
-
-```bash
-npm run dev      # Start development server
-npm start        # Start production server
-npm run build    # Build (if configured)
-```
-
-### Frontend
-
-```bash
-npm run dev      # Start development server
-npm run build    # Create production build
-npm run preview  # Preview production build
-```
-
----
-
-## 🌐 API Configuration
-
-Set the frontend API URL:
-
-```env
-VITE_API_URL=http://localhost:5000
-```
-
-Ensure the backend server is running before using the frontend.
-
----
-
-## 🚀 Production Deployment
-
-### Frontend
-
-```bash
-cd frontend
-npm run build
-```
-
-Deploy the generated `dist/` folder to **Vercel**, **Netlify**, or any static hosting provider.
-
-### Backend
-
-Deploy the `backend/` directory to **Vercel**, **Render**, **Railway**, or another Node.js hosting platform.
-
----
-
-## ☁️ Vercel Deployment
-
-This repository includes `vercel.json` configuration files for both frontend and backend.
-
-### Deploy Steps
-
-1. Import the repository into **Vercel**
-2. Create separate projects for:
-
-   * `frontend/`
-   * `backend/`
-3. Add environment variables in the Vercel dashboard
-4. Deploy both projects
-
----
-
-## 🔒 Environment Variables
-
-### Backend
-
-| Variable       | Description               |
-| -------------- | ------------------------- |
-| `PORT`         | Server port               |
-| `DATABASE_URL` | MongoDB connection string |
-| `JWT_SECRET`   | Secret key for JWT        |
-
-### Frontend
-
-| Variable       | Description          |
-| -------------- | -------------------- |
-| `VITE_API_URL` | Backend API base URL |
-
----
-
-## 📸 Screenshots
-
-Add application screenshots here:
-
-* Login Page
-* Consumer Dashboard
-* Farmer Dashboard
-* Delivery Dashboard
-
-Example:
-
-```md
-![Login](screenshots/login.png)
-```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome!
-
-1. Fork the repository
-2. Create a feature branch
-
-```bash
-git checkout -b feature/your-feature-name
-```
-
-3. Commit your changes
-
-```bash
-git commit -m "Add new feature"
-```
-
-4. Push to your branch
-
-```bash
-git push origin feature/your-feature-name
-```
-
-5. Open a Pull Request
-
----
-
-## 🐛 Issue Reporting
-
-If you find a bug or have a feature request, please open an issue in the GitHub repository.
-
----
-
-## 📄 License
-
-This project currently does not include a license. If you plan to open-source it, consider adding an MIT, Apache 2.0, or GPL license.
+*App will run at http://localhost:3000*
 
 ---
 
 ## 👨‍💻 Author
 
-**Mahaboob Subhani Shaik**
-
-* GitHub: https://github.com/subhani12389
-
----
-
-⭐ If you found this project useful, please consider **starring the repository** on GitHub.
+**Mahaboob Subhani Shaik**  
+GitHub: [https://github.com/subhani12389](https://github.com/subhani12389)

@@ -1,13 +1,14 @@
 {
   "name": "healthymilk-backend",
   "version": "1.0.0",
-  "description": "HealthyMilk REST API Server - Express and Node.js",
+  "description": "HealthyMilk REST API Server - Express and Node.js with Supabase Integration",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.45.1",
     "cors": "^2.8.5",
     "express": "^4.19.2"
   }

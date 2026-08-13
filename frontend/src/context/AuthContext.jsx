@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { apiFetch } from '../utils/api';
 
 const AuthContext = createContext();
 
@@ -8,7 +9,7 @@ export const AuthProvider = ({ children }) => {
     if (savedUser) {
       try { return JSON.parse(savedUser); } catch (e) { return null; }
     }
-    return null; // Start unauthenticated by default
+    return null;
   });
 
   const [token, setToken] = useState(() => {
@@ -18,33 +19,22 @@ export const AuthProvider = ({ children }) => {
   const [activeTab, setActiveTab] = useState('status');
   const [initializing, setInitializing] = useState(true);
 
-  // Validate session on app launch if token exists
-  useEffect(() => {
-    const verifySession = async () => {
-      if (token) {
-        try {
-          const res = await fetch('/api/auth/me', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          const data = await res.json();
-          if (data.success && data.user) {
-            setUser(data.user);
-          } else {
-            // Invalid session
-            setUser(null);
-            setToken(null);
-            localStorage.removeItem('healthymilk_user');
-            localStorage.removeItem('healthymilk_token');
-          }
-        } catch (err) {
-          console.error('Session verification error:', err);
-        }
+  // Refresh user profile session from server on initial load
+  const refreshUserProfile = async () => {
+    const curToken = localStorage.getItem('healthymilk_token');
+    if (curToken) {
+      const data = await apiFetch('/api/auth/me');
+      if (data.success && data.user) {
+        setUser(data.user);
+        localStorage.setItem('healthymilk_user', JSON.stringify(data.user));
       }
-      setInitializing(false);
-    };
+    }
+    setInitializing(false);
+  };
 
-    verifySession();
-  }, [token]);
+  useEffect(() => {
+    refreshUserProfile();
+  }, []);
 
   const loginUser = (userData, authToken) => {
     setUser(userData);
@@ -61,12 +51,23 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('healthymilk_token');
   };
 
+  // Up-to-date Balance Sync
+  const updateUserBalance = (newBalance) => {
+    if (user) {
+      const updatedUser = { ...user, balance: newBalance };
+      setUser(updatedUser);
+      localStorage.setItem('healthymilk_user', JSON.stringify(updatedUser));
+    }
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
       token,
       loginUser,
       logoutUser,
+      updateUserBalance,
+      refreshUserProfile,
       activeTab,
       setActiveTab,
       initializing

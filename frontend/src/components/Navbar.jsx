@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { apiFetch } from '../utils/api';
 import { 
   Sun, Moon, Bell, User, LogOut, CheckCircle2, AlertCircle, 
   Info, ChevronDown, Milk, ShieldCheck 
@@ -22,9 +23,8 @@ export default function Navbar() {
   const fetchNotifications = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`/api/notifications?userId=${user.id}`);
-      const data = await res.json();
-      if (data.success) {
+      const data = await apiFetch(`/api/notifications?userId=${user.id}`);
+      if (data && data.success) {
         setNotifications(data.notifications || []);
         setUnreadCount(data.unreadCount || 0);
       }
@@ -55,9 +55,8 @@ export default function Navbar() {
 
   const markAllAsRead = async () => {
     try {
-      await fetch('/api/notifications/mark-read', {
+      await apiFetch('/api/notifications/mark-read', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user?.id })
       });
       setUnreadCount(0);

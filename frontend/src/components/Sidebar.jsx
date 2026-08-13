@@ -2,7 +2,7 @@ import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   Milk, Wallet, Clock, Settings, Calendar, Truck, 
-  ChevronRight, Award, ShieldCheck, Sparkles 
+  ShieldCheck, Sparkles 
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -10,23 +10,27 @@ export default function Sidebar() {
 
   if (!user) return null;
 
+  const formattedBalance = user.balance !== undefined && user.balance !== null
+    ? `₹${Number(user.balance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '₹0.00';
+
   const farmerItems = [
     { id: 'status', label: 'Current Milk Status', icon: Milk, badge: 'Today' },
-    { id: 'balance', label: 'Account Balance', icon: Wallet, badge: `₹${user.balance ? user.balance.toLocaleString('en-IN') : '14,250'}` },
+    { id: 'balance', label: 'Account Balance', icon: Wallet, badge: formattedBalance },
     { id: 'history', label: 'Supply History', icon: Clock },
     { id: 'settings', label: 'Settings & Farm Profile', icon: Settings }
   ];
 
   const consumerItems = [
     { id: 'status', label: 'Current Milk Status', icon: Milk, badge: 'ETA 7:15 AM' },
-    { id: 'subscription', label: 'Subscription Details & Days', icon: Calendar, badge: '22 Days Left' },
+    { id: 'subscription', label: 'Subscription & Days', icon: Calendar, badge: `${user.subscription?.daysRemaining || 22} Days Left` },
     { id: 'history', label: 'Delivery History', icon: Clock },
     { id: 'settings', label: 'Settings & Address', icon: Settings }
   ];
 
   const agentItems = [
-    { id: 'status', label: 'Dispatch & Pickups Queue', icon: Truck, badge: 'Pending' },
-    { id: 'balance', label: 'Account Balance & Earnings', icon: Wallet, badge: `₹${user.balance ? user.balance.toLocaleString('en-IN') : '3,450'}` },
+    { id: 'status', label: 'Dispatch Queue', icon: Truck, badge: 'Active' },
+    { id: 'balance', label: 'Account Balance & Fee', icon: Wallet, badge: formattedBalance },
     { id: 'history', label: 'Completed Deliveries', icon: Clock },
     { id: 'settings', label: 'Settings & Route', icon: Settings }
   ];
@@ -35,7 +39,7 @@ export default function Sidebar() {
 
   return (
     <aside style={{
-      width: '260px',
+      width: '265px',
       background: 'var(--bg-card)',
       borderRight: '1px solid var(--border-color)',
       padding: '1.25rem 1rem',
@@ -45,7 +49,7 @@ export default function Sidebar() {
       minHeight: 'calc(100vh - 65px)'
     }}>
       <div>
-        {/* User Profile Card Summary */}
+        {/* User Account Card */}
         <div style={{
           padding: '1rem',
           borderRadius: '14px',
@@ -64,7 +68,7 @@ export default function Sidebar() {
           </div>
         </div>
 
-        {/* Section Heading */}
+        {/* Section Title */}
         <div style={{
           fontSize: '0.7rem',
           fontWeight: 700,
@@ -76,7 +80,7 @@ export default function Sidebar() {
           {user.role === 'farmer' ? 'Farmer Dashboard' : user.role === 'consumer' ? 'Consumer Portal' : 'Delivery Agent Portal'}
         </div>
 
-        {/* Navigation List */}
+        {/* Navigation Items */}
         <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
           {navItems.map((item) => {
             const Icon = item.icon;
@@ -104,7 +108,14 @@ export default function Sidebar() {
                   <span>{item.label}</span>
                 </div>
                 {item.badge && (
-                  <span className={`badge ${isActive ? 'badge-success' : 'badge-info'}`} style={{ fontSize: '0.68rem', padding: '2px 6px' }}>
+                  <span 
+                    className={`badge ${isActive ? 'badge-success' : 'badge-info'}`} 
+                    style={{ 
+                      fontSize: '0.68rem', 
+                      padding: '2px 6px',
+                      fontWeight: 800
+                    }}
+                  >
                     {item.badge}
                   </span>
                 )}
@@ -114,7 +125,7 @@ export default function Sidebar() {
         </nav>
       </div>
 
-      {/* Bottom Quality Promise Card */}
+      {/* Quality Banner */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.1) 0%, rgba(37, 99, 235, 0.1) 100%)',
         border: '1px solid var(--border-color)',
