@@ -1,0 +1,16 @@
+{
+  "name": "healthymilk",
+  "version": "1.0.0",
+  "description": "HealthyMilk - Full-Stack Fresh Milk Distribution Platform",
+  "private": true,
+  "scripts": {
+    "build": "npm --prefix frontend install && npm --prefix frontend run build",
+    "start": "npm --prefix backend start",
+    "dev": "npm --prefix backend run dev"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.1",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}

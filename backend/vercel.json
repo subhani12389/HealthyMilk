@@ -1,16 +1,9 @@
 {
   "version": 2,
-  "name": "healthymilk-api",
-  "builds": [
+  "rewrites": [
     {
-      "src": "src/server.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "src/server.js"
+      "source": "/(.*)",
+      "destination": "src/server.js"
     }
   ]
 }
