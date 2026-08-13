@@ -52,10 +52,12 @@ HealthyMilk/
 
 ---
 
-## 🚀 Live Deployment Links
 
-- **Frontend App**: [https://frontend-72pngukxc-shaiks-projects-a7470d9a.vercel.app](https://frontend-72pngukxc-shaiks-projects-a7470d9a.vercel.app)
-- **Backend Production API**: [https://backend-two-alpha-12.vercel.app](https://backend-two-alpha-12.vercel.app)
+🌐 Verified Live Deployment Links
+Resource	Status	URL
+Unified Full-Stack App	🟢 READY & LIVE	https://healthymilk.vercel.app
+API Health Check	🟢 200 OK	https://healthymilk.vercel.app/api/health
+GitHub Repository	🟢 SYNCED	https://github.com/subhani12389/HealthyMilk
 
 ---
 
