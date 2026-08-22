@@ -160,6 +160,9 @@ const notifications = [
   }
 ];
 
+// Temporary In-Memory OTP Store: key = cleanPhone, value = { otp, expiresAt, verified }
+const otpStore = new Map();
+
 module.exports = {
   supabase,
   users,
@@ -167,5 +170,6 @@ module.exports = {
   consumerDeliveries,
   deliveryTasks: consumerDeliveries,
   transactions,
-  notifications
+  notifications,
+  otpStore
 };

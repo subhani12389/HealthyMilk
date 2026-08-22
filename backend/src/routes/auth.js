@@ -1,9 +1,19 @@
 const express = require('express');
 const router = express.Router();
-const { users, supabase } = require('../store');
+const { users, supabase, otpStore, notifications } = require('../store');
 
 const isValidEmail = (email) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+};
+
+const cleanPhoneNumber = (phone) => {
+  if (!phone) return '';
+  return phone.replace(/[^\d+]/g, '');
+};
+
+const isValidPhone = (phone) => {
+  const cleaned = cleanPhoneNumber(phone);
+  return /^\+?[0-9]{10,13}$/.test(cleaned);
 };
 
 // Helper: Format user record from DB or memory into standardized frontend format
@@ -45,17 +55,131 @@ const formatUserObject = (u) => {
   };
 };
 
-// POST /api/auth/signup - Professional User Registration
+// POST /api/auth/send-otp - Request 6-digit OTP code to Phone Number
+router.post('/send-otp', async (req, res) => {
+  try {
+    const { phone, email, isSignup } = req.body;
+
+    if (!phone || !isValidPhone(phone)) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
+    }
+
+    const cleanPhone = cleanPhoneNumber(phone);
+
+    if (isSignup) {
+      if (!email || !isValidEmail(email)) {
+        return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
+      }
+
+      const cleanEmail = email.trim().toLowerCase();
+
+      // Check existing memory users
+      const existingUser = users.find(u => u.email.toLowerCase() === cleanEmail || (u.phone && cleanPhoneNumber(u.phone) === cleanPhone));
+      if (existingUser) {
+        return res.status(409).json({ success: false, message: 'An account with this phone number or email address already exists. Please sign in.' });
+      }
+
+      // Check Supabase DB
+      if (supabase) {
+        try {
+          const { data: dbUser } = await supabase.from('users').select('*').or(`email.eq.${cleanEmail},phone.eq.${cleanPhone}`).maybeSingle();
+          if (dbUser) {
+            return res.status(409).json({ success: false, message: 'An account with this phone number or email address already exists. Please sign in.' });
+          }
+        } catch (err) {
+          console.error('Supabase user duplicate query error:', err);
+        }
+      }
+    }
+
+    // Generate 6-digit OTP
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // Valid for 5 minutes
+
+    otpStore.set(cleanPhone, {
+      phone: cleanPhone,
+      otp: generatedOtp,
+      expiresAt,
+      verified: false
+    });
+
+    notifications.unshift({
+      id: `notif_${Date.now()}`,
+      userId: 'all',
+      title: 'SMS OTP Code Sent',
+      message: `Verification code for ${cleanPhone} is ${generatedOtp}. Valid for 5 mins.`,
+      time: 'Just now',
+      read: false,
+      type: 'info'
+    });
+
+    return res.json({
+      success: true,
+      message: `Verification OTP sent to ${cleanPhone}.`,
+      otp: generatedOtp, // Included in payload for instant live testing & preview
+      expiresSeconds: 300
+    });
+  } catch (err) {
+    console.error('Send OTP error:', err);
+    return res.status(500).json({ success: false, message: 'Server error generating OTP.' });
+  }
+});
+
+// POST /api/auth/verify-otp - Verify 6-digit OTP Code
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+
+    if (!phone || !otp) {
+      return res.status(400).json({ success: false, message: 'Please enter your mobile number and 6-digit OTP code.' });
+    }
+
+    const cleanPhone = cleanPhoneNumber(phone);
+    const otpRecord = otpStore.get(cleanPhone);
+
+    if (!otpRecord) {
+      return res.status(400).json({ success: false, message: 'No OTP requested for this phone number. Please click Send OTP.' });
+    }
+
+    if (Date.now() > otpRecord.expiresAt) {
+      otpStore.delete(cleanPhone);
+      return res.status(400).json({ success: false, message: 'OTP code has expired. Please request a new OTP.' });
+    }
+
+    if (otpRecord.otp !== otp.trim()) {
+      return res.status(400).json({ success: false, message: 'Incorrect OTP verification code. Please check and try again.' });
+    }
+
+    otpRecord.verified = true;
+    const verificationToken = `verified_${cleanPhone}_${Date.now()}`;
+    otpRecord.verificationToken = verificationToken;
+
+    return res.json({
+      success: true,
+      message: 'Mobile number verified successfully!',
+      verificationToken
+    });
+  } catch (err) {
+    console.error('Verify OTP error:', err);
+    return res.status(500).json({ success: false, message: 'Server error verifying OTP.' });
+  }
+});
+
+// POST /api/auth/signup - Professional User Registration with Verified Mobile
 router.post('/signup', async (req, res) => {
   try {
-    const { name, email, password, role, farmName, address, phone, vehicleNo, assignedArea } = req.body;
+    const { name, email, phone, password, role, farmName, address, vehicleNo, assignedArea, otp } = req.body;
 
-    if (!name || !name.trim()) {
-      return res.status(400).json({ success: false, message: 'Full name is required.' });
+    if (!name || !name.trim() || name.trim().length < 2) {
+      return res.status(400).json({ success: false, message: 'Please enter your full name (minimum 2 characters).' });
     }
 
     if (!email || !isValidEmail(email)) {
       return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
+    }
+
+    if (!phone || !isValidPhone(phone)) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
     }
 
     if (!password || password.length < 6) {
@@ -68,18 +192,31 @@ router.post('/signup', async (req, res) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = cleanPhoneNumber(phone);
 
-    // Check memory store
-    const existingMemoryUser = users.find(u => u.email.toLowerCase() === cleanEmail);
+    // Verify Mobile OTP status
+    const otpRecord = otpStore.get(cleanPhone);
+    
+    // Auto-verify if valid OTP passed in signup payload
+    if (otp && otpRecord && otpRecord.otp === otp.trim() && Date.now() <= otpRecord.expiresAt) {
+      otpRecord.verified = true;
+    }
+
+    if (!otpRecord || !otpRecord.verified) {
+      return res.status(400).json({ success: false, message: 'Mobile number not verified. Please verify the 6-digit OTP code sent to your phone.' });
+    }
+
+    // Check memory store for duplicates
+    const existingMemoryUser = users.find(u => u.email.toLowerCase() === cleanEmail || (u.phone && cleanPhoneNumber(u.phone) === cleanPhone));
     if (existingMemoryUser) {
-      return res.status(409).json({ success: false, message: 'An account with this email address already exists. Please sign in.' });
+      return res.status(409).json({ success: false, message: 'An account with this email or mobile number already exists. Please sign in.' });
     }
 
     // Check Supabase DB
     if (supabase) {
-      const { data: dbUser } = await supabase.from('users').select('*').eq('email', cleanEmail).maybeSingle();
+      const { data: dbUser } = await supabase.from('users').select('*').or(`email.eq.${cleanEmail},phone.eq.${cleanPhone}`).maybeSingle();
       if (dbUser) {
-        return res.status(409).json({ success: false, message: 'An account with this email address already exists. Please sign in.' });
+        return res.status(409).json({ success: false, message: 'An account with this email or mobile number already exists. Please sign in.' });
       }
     }
 
@@ -88,9 +225,9 @@ router.post('/signup', async (req, res) => {
       id: userId,
       name: name.trim(),
       email: cleanEmail,
+      phone: cleanPhone,
       password: password,
       role: selectedRole,
-      phone: phone ? phone.trim() : '+91 98765 43210',
       balance: 0.00,
       createdAt: new Date().toISOString(),
       farmName: farmName ? farmName.trim() : `${name.trim()}'s Dairy Farm`,
@@ -117,6 +254,7 @@ router.post('/signup', async (req, res) => {
 
     // Save to memory
     users.push(newUser);
+    otpStore.delete(cleanPhone);
 
     // Save to Supabase DB
     if (supabase) {
@@ -147,7 +285,7 @@ router.post('/signup', async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `Account created successfully as ${selectedRole.toUpperCase()}!`,
+      message: `Account created & verified successfully as ${selectedRole.toUpperCase()}!`,
       user: formattedUser,
       token: `jwt_token_${userId}_${Date.now()}`
     });
@@ -157,24 +295,29 @@ router.post('/signup', async (req, res) => {
   }
 });
 
-// POST /api/auth/login - Flexible Role Matching & Verification
+// POST /api/auth/login - Flexible Email/Phone Identifier Verification
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, identifier, password } = req.body;
+    const loginTarget = (identifier || email || '').trim();
 
-    if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Please enter both email address and password.' });
+    if (!loginTarget || !password) {
+      return res.status(400).json({ success: false, message: 'Please enter both your email/mobile number and password.' });
     }
 
-    const cleanEmail = email.trim().toLowerCase();
+    const cleanInput = loginTarget.toLowerCase();
+    const cleanPhone = cleanPhoneNumber(loginTarget);
 
-    // 1. Search Memory Store first
-    let user = users.find(u => u.email.toLowerCase() === cleanEmail);
+    // 1. Search Memory Store first (match email OR phone)
+    let user = users.find(u => 
+      u.email.toLowerCase() === cleanInput || 
+      (u.phone && cleanPhoneNumber(u.phone) === cleanPhone)
+    );
 
     // 2. Search Supabase DB if not found in memory
     if (!user && supabase) {
       try {
-        const { data: dbUser } = await supabase.from('users').select('*').eq('email', cleanEmail).maybeSingle();
+        const { data: dbUser } = await supabase.from('users').select('*').or(`email.eq.${cleanInput},phone.eq.${cleanPhone}`).maybeSingle();
         if (dbUser) {
           user = dbUser;
         }
@@ -184,7 +327,7 @@ router.post('/login', async (req, res) => {
     }
 
     if (!user) {
-      return res.status(401).json({ success: false, message: 'No account found with this email address. Please sign up.' });
+      return res.status(401).json({ success: false, message: 'No account found with these credentials. Please check details or click Create Account to sign up.' });
     }
 
     if (user.password && user.password !== password) {
@@ -215,7 +358,7 @@ router.get('/me', async (req, res) => {
 
     const token = authHeader.replace('Bearer ', '');
 
-    // Robust user match from token string
+    // User match from token string
     let user = users.find(u => token.includes(u.id));
 
     if (!user && supabase) {
@@ -229,7 +372,6 @@ router.get('/me', async (req, res) => {
       }
     }
 
-    // Fallback: if token has jwt_token_<id>_ format, try first matched memory user
     if (!user && users.length > 0) {
       user = users[0];
     }
