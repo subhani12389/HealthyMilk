@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const { users, supabase, otpStore, notifications } = require('../store');
 const User = require('../models/User');
 const { JWT_SECRET, authLimiter, verifyToken } = require('../middleware/authMiddleware');
+const { sendSMS } = require('../services/smsService');
 
 // Helper: Normalize 10-digit Indian Mobile Number
 const extract10DigitMobile = (mobileStr) => {
@@ -146,6 +147,9 @@ router.post('/send-otp', authLimiter, async (req, res) => {
       attempts: 0,
       verified: false
     });
+
+    // Send Real SMS via SMS Gateway (Twilio / Fast2SMS / Custom HTTP SMS Gateway)
+    const smsResult = await sendSMS({ toPhone: cleanMobile, otp: rawOtp });
 
     notifications.unshift({
       id: `notif_${Date.now()}`,
