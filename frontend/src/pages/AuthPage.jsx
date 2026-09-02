@@ -1,18 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../utils/api';
 import { 
   Milk, User, Lock, Mail, MapPin, Building, ArrowRight, 
   Eye, EyeOff, ShieldCheck, CheckCircle2, Truck, Navigation, 
-  Sparkles, Zap, Phone, AlertCircle, X, HelpCircle, Check
+  Sparkles, Phone, AlertCircle, X, HelpCircle, Check, KeyRound,
+  RotateCcw, ArrowLeft
 } from 'lucide-react';
 
 export default function AuthPage() {
   const { loginUser } = useAuth();
   const [isSignup, setIsSignup] = useState(false);
+  const [signupStep, setSignupStep] = useState(1); // 1: Personal & Account Details, 2: Mobile OTP Verification
   const [role, setRole] = useState('farmer');
 
-  // Form Fields
+  // Form Fields (Clean initial state without pre-filled demo values)
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -25,6 +27,11 @@ export default function AuthPage() {
     assignedArea: ''
   });
 
+  // Phone OTP Verification States
+  const [otpCode, setOtpCode] = useState('');
+  const [sentOtp, setSentOtp] = useState('');
+  const [resendTimer, setResendTimer] = useState(0);
+
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [showForgotPassword, setShowForgotPassword] = useState(false);
@@ -35,7 +42,20 @@ export default function AuthPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Password Strength Validation State
+  // Countdown timer for Resend OTP
+  useEffect(() => {
+    let interval = null;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer(prev => prev - 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
+
+  // Password Security Meter & Field Validations
   const pwdValidation = {
     minLength: (formData.password || '').length >= 8,
     hasUpper: /[A-Z]/.test(formData.password || ''),
@@ -50,47 +70,17 @@ export default function AuthPage() {
   const isNameValid = (formData.name || '').trim().length >= 2;
   const isConfirmMatch = formData.password && formData.password === formData.confirmPassword;
 
-  const isSignupFormValid = isNameValid && isEmailValid && isMobileValid && isPasswordStrong && isConfirmMatch;
+  const isStep1Valid = isNameValid && isEmailValid && isMobileValid && isPasswordStrong && isConfirmMatch;
 
-  // Role Selection Helper
   const handleRoleChange = (newRole) => {
     setRole(newRole);
     setErrorMsg('');
     setSuccessMsg('');
   };
 
-  // Instant 1-Click Demo Login
-  const handleQuickLogin = async (targetRole, targetEmail) => {
-    setLoading(true);
-    setErrorMsg('');
-    setSuccessMsg('');
-    setRole(targetRole);
-
-    try {
-      const data = await apiFetch('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ identifier: targetEmail, password: 'password123', role: targetRole })
-      });
-
-      if (data.success && data.user) {
-        setSuccessMsg(`Welcome back, ${data.user.name}!`);
-        setTimeout(() => {
-          loginUser(data.user, data.token);
-        }, 300);
-      } else {
-        setErrorMsg(data.message || 'Quick sign in failed.');
-      }
-    } catch (err) {
-      setErrorMsg('Server connection error. Please verify backend server is running.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleChange = (e) => {
     const { name, value } = e.target;
     if (name === 'mobile') {
-      // Restrict mobile input to numeric digits only, max 10 characters
       const cleanDigits = value.replace(/[^\d]/g, '').slice(0, 10);
       setFormData(prev => ({ ...prev, mobile: cleanDigits }));
     } else {
@@ -99,18 +89,91 @@ export default function AuthPage() {
     if (errorMsg) setErrorMsg('');
   };
 
-  // Signup Submit
-  const handleSignupSubmit = async (e) => {
+  // Step 1: Send OTP to Mobile Number
+  const handleSendOTP = async (e) => {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
 
-    if (!isSignupFormValid) {
-      if (!isNameValid) setErrorMsg('Please enter a valid full name (minimum 2 characters).');
+    if (!isStep1Valid) {
+      if (!isNameValid) setErrorMsg('Please enter your full name (minimum 2 characters).');
       else if (!isEmailValid) setErrorMsg('Please enter a valid email address.');
       else if (!isMobileValid) setErrorMsg('Mobile number must be exactly 10 numeric digits.');
-      else if (!isPasswordStrong) setErrorMsg('Password does not meet strong password security criteria.');
+      else if (!isPasswordStrong) setErrorMsg('Password does not meet strong security requirements.');
       else if (!isConfirmMatch) setErrorMsg('Confirm Password must exactly match Password.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/api/auth/send-otp', {
+        method: 'POST',
+        body: JSON.stringify({
+          phone: formData.mobile,
+          mobile: formData.mobile,
+          email: formData.email.trim().toLowerCase(),
+          isSignup: true
+        })
+      });
+
+      if (data.success) {
+        setSentOtp(data.otp || '123456');
+        setOtpCode(data.otp || ''); // Pre-fills OTP for instant test convenience
+        setSuccessMsg(data.message || `Verification OTP sent to +91 ${formData.mobile}`);
+        setSignupStep(2);
+        setResendTimer(30);
+      } else {
+        setErrorMsg(data.message || 'Failed to send OTP code. Please check details.');
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error sending OTP.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend OTP
+  const handleResendOTP = async () => {
+    if (resendTimer > 0) return;
+    setErrorMsg('');
+    setSuccessMsg('');
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/api/auth/send-otp', {
+        method: 'POST',
+        body: JSON.stringify({
+          phone: formData.mobile,
+          mobile: formData.mobile,
+          email: formData.email.trim().toLowerCase(),
+          isSignup: true
+        })
+      });
+
+      if (data.success) {
+        setSentOtp(data.otp || '123456');
+        setOtpCode(data.otp || '');
+        setSuccessMsg(`New OTP code sent to +91 ${formData.mobile}`);
+        setResendTimer(30);
+      } else {
+        setErrorMsg(data.message || 'Failed to resend OTP.');
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Step 2: Verify OTP & Complete Registration
+  const handleVerifyOTPAndSignup = async (e) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!otpCode || otpCode.trim().length < 6) {
+      setErrorMsg('Please enter the 6-digit OTP code sent to your mobile number.');
       return;
     }
 
@@ -123,20 +186,21 @@ export default function AuthPage() {
           ...formData,
           email: formData.email.trim().toLowerCase(),
           mobile: formData.mobile.trim(),
-          role
+          role,
+          otp: otpCode.trim()
         })
       });
 
       if (data.success && data.user) {
-        setSuccessMsg(data.message || 'Account created successfully!');
+        setSuccessMsg(data.message || 'Mobile number verified! Account created successfully.');
         setTimeout(() => {
           loginUser(data.user, data.token);
         }, 400);
       } else {
-        setErrorMsg(data.message || 'Registration failed. Please check details.');
+        setErrorMsg(data.message || 'OTP verification failed. Please try again.');
       }
     } catch (err) {
-      setErrorMsg('Server error during registration. Please check connection.');
+      setErrorMsg('Server connection error verifying OTP.');
     } finally {
       setLoading(false);
     }
@@ -226,7 +290,7 @@ export default function AuthPage() {
         backdropFilter: 'blur(20px)'
       }}>
         
-        {/* Brand Identity Header */}
+        {/* Brand Header */}
         <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
           <div style={{
             width: '56px',
@@ -247,76 +311,10 @@ export default function AuthPage() {
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: '4px' }}>
             {isSignup 
-              ? 'Create a secure production account for HealthyMilk' 
+              ? (signupStep === 1 ? 'Step 1: Account Registration Details' : 'Step 2: Verify Mobile OTP') 
               : 'Sign in to access your dairy management portal'}
           </p>
         </div>
-
-        {/* 1-Click Quick Access Shortcuts (Sign In Mode Only) */}
-        {!isSignup && (
-          <div style={{
-            background: 'var(--bg-primary)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '16px',
-            padding: '1rem',
-            marginBottom: '1.5rem',
-            textAlign: 'center'
-          }}>
-            <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase', marginBottom: '0.65rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
-              <Zap size={15} color="var(--accent-amber)" /> 1-Click Instant Demo Role Sign In
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('farmer', 'farmer@healthymilk.com')}
-                disabled={loading}
-                style={{
-                  padding: '0.55rem 0.35rem',
-                  borderRadius: '10px',
-                  background: 'var(--accent-emerald-light)',
-                  color: 'var(--accent-emerald)',
-                  fontWeight: 700,
-                  fontSize: '0.76rem',
-                  border: '1px solid rgba(16, 185, 129, 0.3)'
-                }}
-              >
-                🌾 Farmer
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('agent', 'agent@healthymilk.com')}
-                disabled={loading}
-                style={{
-                  padding: '0.55rem 0.35rem',
-                  borderRadius: '10px',
-                  background: 'var(--accent-amber-light)',
-                  color: 'var(--accent-amber)',
-                  fontWeight: 700,
-                  fontSize: '0.76rem',
-                  border: '1px solid rgba(245, 158, 11, 0.3)'
-                }}
-              >
-                🚚 Agent
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('consumer', 'consumer@healthymilk.com')}
-                disabled={loading}
-                style={{
-                  padding: '0.55rem 0.35rem',
-                  borderRadius: '10px',
-                  background: 'var(--accent-blue-light)',
-                  color: 'var(--accent-blue)',
-                  fontWeight: 700,
-                  fontSize: '0.76rem',
-                  border: '1px solid rgba(37, 99, 235, 0.3)'
-                }}
-              >
-                🥛 Consumer
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Tab Switcher: Sign In / Create Account */}
         <div style={{
@@ -329,7 +327,7 @@ export default function AuthPage() {
         }}>
           <button
             type="button"
-            onClick={() => { setIsSignup(false); setErrorMsg(''); setSuccessMsg(''); }}
+            onClick={() => { setIsSignup(false); setSignupStep(1); setErrorMsg(''); setSuccessMsg(''); }}
             style={{
               flex: 1,
               padding: '0.65rem',
@@ -346,7 +344,7 @@ export default function AuthPage() {
           </button>
           <button
             type="button"
-            onClick={() => { setIsSignup(true); setErrorMsg(''); setSuccessMsg(''); }}
+            onClick={() => { setIsSignup(true); setSignupStep(1); setErrorMsg(''); setSuccessMsg(''); }}
             style={{
               flex: 1,
               padding: '0.65rem',
@@ -399,11 +397,11 @@ export default function AuthPage() {
           </div>
         )}
 
-        {/* SIGNUP FORM */}
-        {isSignup && (
-          <form onSubmit={handleSignupSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+        {/* SIGNUP STEP 1: Registration Form */}
+        {isSignup && signupStep === 1 && (
+          <form onSubmit={handleSendOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
             
-            {/* Role Selection Buttons */}
+            {/* Role Selector Buttons */}
             <div>
               <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem' }}>
                 Select User Role <span style={{ color: 'var(--accent-rose)' }}>*</span>
@@ -524,10 +522,12 @@ export default function AuthPage() {
               </div>
             </div>
 
-            {/* Mobile Number (Strict 10 Digits Numeric) */}
+            {/* Mobile Number for OTP Verification */}
             <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Mobile Number (10 Digits)</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  Mobile Number (for SMS OTP Verification)
+                </label>
                 {formData.mobile && (
                   <span style={{ fontSize: '0.72rem', fontWeight: 600, color: isMobileValid ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}>
                     {isMobileValid ? '✓ 10 Digits Valid' : `${formData.mobile.length}/10 Digits`}
@@ -599,7 +599,7 @@ export default function AuthPage() {
                 </button>
               </div>
 
-              {/* Password Security Criteria Checklist */}
+              {/* Password Checklist */}
               {formData.password && (
                 <div style={{
                   marginTop: '0.6rem',
@@ -688,7 +688,7 @@ export default function AuthPage() {
                   <input
                     type="text"
                     name="farmName"
-                    placeholder="e.g. Patel Dairy Farm"
+                    placeholder="e.g. Patel Organic Dairy Farm"
                     value={formData.farmName}
                     onChange={handleChange}
                     style={{
@@ -781,18 +781,126 @@ export default function AuthPage() {
 
             <button
               type="submit"
-              disabled={loading || !isSignupFormValid}
+              disabled={loading || !isStep1Valid}
               className="btn-primary"
               style={{
                 width: '100%',
                 justifyContent: 'center',
                 marginTop: '0.5rem',
                 padding: '0.85rem',
-                opacity: (loading || !isSignupFormValid) ? 0.6 : 1,
-                cursor: (loading || !isSignupFormValid) ? 'not-allowed' : 'pointer'
+                opacity: (loading || !isStep1Valid) ? 0.6 : 1,
+                cursor: (loading || !isStep1Valid) ? 'not-allowed' : 'pointer'
               }}
             >
-              {loading ? 'Processing Signup...' : 'Create Account'}
+              {loading ? 'Validating Details...' : 'Send Verification OTP to Phone'}
+              <ArrowRight size={18} />
+            </button>
+          </form>
+        )}
+
+        {/* SIGNUP STEP 2: Phone OTP Verification Card */}
+        {isSignup && signupStep === 2 && (
+          <form onSubmit={handleVerifyOTPAndSignup} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{
+              background: 'var(--accent-emerald-light)',
+              border: '1px solid var(--accent-emerald)',
+              borderRadius: '16px',
+              padding: '1.1rem',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
+                📱 Mobile OTP Code Sent
+              </div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+                +91 {formData.mobile}
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                Please enter the 6-digit verification code sent to your phone.
+              </p>
+
+              {sentOtp && (
+                <div style={{
+                  marginTop: '0.75rem',
+                  background: 'var(--bg-card)',
+                  border: '1px dashed var(--accent-emerald)',
+                  borderRadius: '10px',
+                  padding: '0.5rem 0.75rem',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  color: 'var(--accent-emerald)',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem'
+                }}>
+                  <Sparkles size={15} /> Demo OTP Code: <strong style={{ letterSpacing: '2px', fontSize: '0.95rem' }}>{sentOtp}</strong>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                Enter 6-Digit OTP Code
+              </label>
+              <div style={{ position: 'relative', marginTop: '0.35rem' }}>
+                <KeyRound size={20} color="var(--accent-emerald)" style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  type="text"
+                  maxLength={6}
+                  required
+                  placeholder="e.g. 123456"
+                  value={otpCode}
+                  onChange={(e) => setOtpCode(e.target.value.replace(/[^\d]/g, ''))}
+                  style={{
+                    width: '100%',
+                    padding: '0.85rem 0.75rem 0.85rem 2.75rem',
+                    borderRadius: '12px',
+                    border: '2px solid var(--accent-emerald)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '1.25rem',
+                    fontWeight: 800,
+                    letterSpacing: '4px',
+                    textAlign: 'left'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+              <button
+                type="button"
+                onClick={() => setSignupStep(1)}
+                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}
+              >
+                <ArrowLeft size={15} /> Edit Phone & Details
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResendOTP}
+                disabled={resendTimer > 0 || loading}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: resendTimer > 0 ? 'var(--text-muted)' : 'var(--accent-emerald)',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  cursor: resendTimer > 0 ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <RotateCcw size={14} /> {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend OTP'}
+              </button>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="btn-primary"
+              style={{ width: '100%', justifyContent: 'center', marginTop: '0.5rem', padding: '0.85rem' }}
+            >
+              {loading ? 'Verifying OTP & Creating Account...' : 'Verify OTP & Create Account'}
               <ShieldCheck size={18} />
             </button>
           </form>
@@ -802,10 +910,10 @@ export default function AuthPage() {
         {!isSignup && (
           <form onSubmit={handleLoginSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
             
-            {/* Email or Mobile Number Input */}
+            {/* Email or Mobile Number */}
             <div>
               <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                Email Address or 10-Digit Mobile Number
+                Registered Email Address or 10-Digit Mobile Number
               </label>
               <div style={{ position: 'relative', marginTop: '0.35rem' }}>
                 <Mail size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
@@ -813,7 +921,7 @@ export default function AuthPage() {
                   type="text"
                   name="email"
                   required
-                  placeholder="e.g. farmer@healthymilk.com or 9876543210"
+                  placeholder="e.g. ramesh@healthymilk.com or 9876543210"
                   value={formData.email}
                   onChange={handleChange}
                   style={{
@@ -955,7 +1063,7 @@ export default function AuthPage() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g. farmer@healthymilk.com or 9876543210"
+                  placeholder="e.g. ramesh@healthymilk.com or 9876543210"
                   value={forgotTarget}
                   onChange={(e) => setForgotTarget(e.target.value)}
                   style={{

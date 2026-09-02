@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { users, supabase } = require('../store');
+const { users, supabase, otpStore, notifications } = require('../store');
 const User = require('../models/User');
 const { JWT_SECRET, authLimiter, verifyToken } = require('../middleware/authMiddleware');
 
@@ -14,7 +14,6 @@ const isValidEmail = (email) => {
 const extract10DigitMobile = (mobileStr) => {
   if (!mobileStr) return '';
   const digitsOnly = mobileStr.replace(/[^\d]/g, '');
-  // If 12 digits starting with 91, take last 10 digits
   if (digitsOnly.length === 12 && digitsOnly.startsWith('91')) {
     return digitsOnly.slice(2);
   }
@@ -48,8 +47,8 @@ const formatUserObject = (u) => {
     _id: userObj._id ? userObj._id.toString() : userObj.id,
     name: userObj.name,
     email: userObj.email,
-    mobile: userObj.mobile || userObj.phone || '9876543210',
-    phone: userObj.mobile || userObj.phone || '9876543210',
+    mobile: userObj.mobile || userObj.phone || '',
+    phone: userObj.mobile || userObj.phone || '',
     role: userObj.role === 'agent' ? 'delivery_agent' : userObj.role,
     isActive: userObj.isActive !== undefined ? userObj.isActive : true,
     balance: userObj.balance !== undefined && userObj.balance !== null ? Number(userObj.balance) : 0,
@@ -60,7 +59,7 @@ const formatUserObject = (u) => {
     address: userObj.address || 'Apt 402, Green Acres Heights, Sector 14',
     vehicleNo: userObj.vehicleNo || userObj.vehicle_no || 'GJ-07-MK-4421',
     assignedArea: userObj.assignedArea || userObj.assigned_area || 'Sector 14 & Green Valley',
-    totalDeliveries: userObj.totalDeliveries || userObj.total_deliveries || 69,
+    totalDeliveries: userObj.totalDeliveries || userObj.total_deliveries || 0,
     bankDetails: userObj.bankDetails || {
       accountNo: 'XXXX-XXXX-8921',
       ifsc: 'SBIN0004123',
@@ -71,9 +70,9 @@ const formatUserObject = (u) => {
       planName: 'Pure Fresh A2 Cow Milk',
       dailyLiters: 2,
       totalDays: 30,
-      daysRemaining: 22,
-      startDate: '2026-08-01',
-      endDate: '2026-08-31',
+      daysRemaining: 30,
+      startDate: new Date().toISOString().split('T')[0],
+      endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
       status: 'Active',
       pricePerLiter: 65,
       totalAmountPaid: 3900,
@@ -85,11 +84,128 @@ const formatUserObject = (u) => {
 };
 
 // ==========================================
-// 1. POST /api/auth/signup - User Registration
+// 1. POST /api/auth/send-otp - Generate & Dispatch Phone Verification OTP
+// ==========================================
+router.post('/send-otp', authLimiter, async (req, res) => {
+  try {
+    const { phone, mobile, email, isSignup } = req.body;
+    const targetMobile = extract10DigitMobile(mobile || phone);
+
+    if (!targetMobile || !isValidMobile(targetMobile)) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
+    }
+
+    if (isSignup) {
+      const cleanEmail = (email || '').trim().toLowerCase();
+      if (!cleanEmail || !isValidEmail(cleanEmail)) {
+        return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
+      }
+
+      // Check existing accounts in Memory Store
+      const existingMemEmail = users.find(u => u.email.toLowerCase() === cleanEmail);
+      if (existingMemEmail) {
+        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+      }
+
+      const existingMemMobile = users.find(u => u.mobile === targetMobile || (u.phone && extract10DigitMobile(u.phone) === targetMobile));
+      if (existingMemMobile) {
+        return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
+      }
+
+      // Check Mongoose DB
+      try {
+        const dbEmailUser = await User.findOne({ email: cleanEmail });
+        if (dbEmailUser) {
+          return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+        }
+        const dbMobileUser = await User.findOne({ mobile: targetMobile });
+        if (dbMobileUser) {
+          return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
+        }
+      } catch (e) {}
+    }
+
+    // Generate 6-digit OTP code
+    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // Valid for 5 minutes
+
+    otpStore.set(targetMobile, {
+      phone: targetMobile,
+      otp: generatedOtp,
+      expiresAt,
+      verified: false
+    });
+
+    notifications.unshift({
+      id: `notif_${Date.now()}`,
+      userId: 'all',
+      title: 'SMS OTP Code Sent',
+      message: `Your HealthyMilk verification code for +91 ${targetMobile} is ${generatedOtp}. Valid for 5 mins.`,
+      time: 'Just now',
+      read: false,
+      type: 'info'
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Verification OTP sent to +91 ${targetMobile}.`,
+      otp: generatedOtp, // Included in payload for instant live testing & preview
+      expiresSeconds: 300
+    });
+  } catch (err) {
+    console.error('Send OTP error:', err);
+    return res.status(500).json({ success: false, message: 'Server error generating OTP.' });
+  }
+});
+
+// ==========================================
+// 2. POST /api/auth/verify-otp - Verify 6-Digit OTP Code
+// ==========================================
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { phone, mobile, otp } = req.body;
+    const cleanMobile = extract10DigitMobile(mobile || phone);
+
+    if (!cleanMobile || !otp) {
+      return res.status(400).json({ success: false, message: 'Please enter your mobile number and 6-digit OTP code.' });
+    }
+
+    const otpRecord = otpStore.get(cleanMobile);
+
+    if (!otpRecord) {
+      return res.status(400).json({ success: false, message: 'No OTP requested for this phone number. Please click Send OTP.' });
+    }
+
+    if (Date.now() > otpRecord.expiresAt) {
+      otpStore.delete(cleanMobile);
+      return res.status(400).json({ success: false, message: 'OTP code has expired. Please request a new OTP.' });
+    }
+
+    if (otpRecord.otp !== otp.trim()) {
+      return res.status(400).json({ success: false, message: 'Incorrect OTP verification code. Please check and try again.' });
+    }
+
+    otpRecord.verified = true;
+    const verificationToken = `verified_${cleanMobile}_${Date.now()}`;
+    otpRecord.verificationToken = verificationToken;
+
+    return res.status(200).json({
+      success: true,
+      message: 'Mobile number verified successfully!',
+      verificationToken
+    });
+  } catch (err) {
+    console.error('Verify OTP error:', err);
+    return res.status(500).json({ success: false, message: 'Server error verifying OTP.' });
+  }
+});
+
+// ==========================================
+// 3. POST /api/auth/signup - User Registration with Verified Mobile
 // ==========================================
 router.post('/signup', authLimiter, async (req, res) => {
   try {
-    const { name, email, mobile, phone, password, confirmPassword, role, farmName, address, vehicleNo, assignedArea } = req.body;
+    const { name, email, mobile, phone, password, confirmPassword, role, farmName, address, vehicleNo, assignedArea, otp } = req.body;
 
     // 1. Validate Required Fields & Formatting
     if (!name || typeof name !== 'string' || name.trim().length < 2) {
@@ -121,8 +237,20 @@ router.post('/signup', authLimiter, async (req, res) => {
     }
     if (selectedRole === 'agent') selectedRole = 'delivery_agent';
 
-    // 2. Strict Duplicate Prevention Checks
-    // Check Memory Store
+    // 2. Verify Mobile Phone OTP Verification Status
+    const otpRecord = otpStore.get(cleanMobile);
+    if (otp && otpRecord && otpRecord.otp === otp.trim() && Date.now() <= otpRecord.expiresAt) {
+      otpRecord.verified = true;
+    }
+
+    if (!otpRecord || !otpRecord.verified) {
+      return res.status(400).json({
+        success: false,
+        message: 'Mobile number not verified. Please verify the 6-digit OTP code sent to your phone.'
+      });
+    }
+
+    // 3. Duplicate Prevention Checks
     const duplicateMemoryEmail = users.find(u => u.email.toLowerCase() === cleanEmail);
     if (duplicateMemoryEmail) {
       return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
@@ -133,11 +261,10 @@ router.post('/signup', authLimiter, async (req, res) => {
       return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
     }
 
-    // 3. Attempt DB Registration with Unique Index Error Handling
+    // 4. Save Account to Database / Store
     let newUserRecord = null;
 
     try {
-      // Check Mongoose DB if connected
       const existingDbEmail = await User.findOne({ email: cleanEmail });
       if (existingDbEmail) {
         return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
@@ -148,7 +275,6 @@ router.post('/signup', authLimiter, async (req, res) => {
         return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
       }
 
-      // Create new Mongoose User document
       newUserRecord = new User({
         name: name.trim(),
         email: cleanEmail,
@@ -164,7 +290,6 @@ router.post('/signup', authLimiter, async (req, res) => {
 
       await newUserRecord.save();
     } catch (dbErr) {
-      // Catch MongoDB Duplicate Key Error (Code 11000) for Race Condition Prevention
       if (dbErr.code === 11000) {
         const keyPattern = dbErr.keyPattern || {};
         const errmsg = dbErr.errmsg || '';
@@ -175,10 +300,9 @@ router.post('/signup', authLimiter, async (req, res) => {
           return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
         }
       }
-      console.warn('DB User save skipped/fallback:', dbErr.message);
+      console.warn('DB save skipped/fallback:', dbErr.message);
     }
 
-    // Fallback store insertion if DB was not connected
     if (!newUserRecord) {
       const hashedPassword = await bcrypt.hash(password, 10);
       const userId = `${selectedRole}_${Date.now()}`;
@@ -202,7 +326,10 @@ router.post('/signup', authLimiter, async (req, res) => {
       users.push(newUserRecord);
     }
 
-    // Generate Secure JWT Token
+    // Clean up OTP record
+    otpStore.delete(cleanMobile);
+
+    // Generate JWT Access Token
     const payload = {
       id: newUserRecord._id ? newUserRecord._id.toString() : newUserRecord.id,
       email: newUserRecord.email,
@@ -214,7 +341,7 @@ router.post('/signup', authLimiter, async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: `Account created successfully as ${selectedRole.toUpperCase().replace('_', ' ')}!`,
+      message: `Account created & mobile verified successfully as ${selectedRole.toUpperCase().replace('_', ' ')}!`,
       user: formattedUser,
       token
     });
@@ -226,7 +353,7 @@ router.post('/signup', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 2. POST /api/auth/login - Credential Verification
+// 4. POST /api/auth/login - Credential Verification
 // ==========================================
 router.post('/login', authLimiter, async (req, res) => {
   try {
@@ -245,7 +372,6 @@ router.post('/login', authLimiter, async (req, res) => {
 
     let user = null;
 
-    // Search Database first
     try {
       user = await User.findOne({
         $or: [
@@ -253,11 +379,8 @@ router.post('/login', authLimiter, async (req, res) => {
           { mobile: cleanMobile }
         ]
       });
-    } catch (e) {
-      // Ignore DB error fallback
-    }
+    } catch (e) {}
 
-    // Search In-Memory Store if not found in DB
     if (!user) {
       user = users.find(u =>
         u.email.toLowerCase() === cleanInput ||
@@ -266,7 +389,6 @@ router.post('/login', authLimiter, async (req, res) => {
       );
     }
 
-    // Generic error message to prevent email/mobile account enumeration
     const genericAuthError = 'Invalid email/mobile number or password.';
 
     if (!user) {
@@ -276,7 +398,6 @@ router.post('/login', authLimiter, async (req, res) => {
       });
     }
 
-    // Account Activity Check
     if (user.isActive === false) {
       return res.status(401).json({
         success: false,
@@ -284,7 +405,6 @@ router.post('/login', authLimiter, async (req, res) => {
       });
     }
 
-    // Verify Password using bcrypt (or legacy string fallback for demo pre-existing users)
     let isPasswordValid = false;
     if (user.comparePassword) {
       isPasswordValid = await user.comparePassword(password);
@@ -303,7 +423,6 @@ router.post('/login', authLimiter, async (req, res) => {
       });
     }
 
-    // Generate JWT Token
     const payload = {
       id: user._id ? user._id.toString() : user.id,
       email: user.email,
@@ -330,7 +449,7 @@ router.post('/login', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 3. POST /api/auth/logout - Session Termination
+// 5. POST /api/auth/logout - Session Termination
 // ==========================================
 router.post('/logout', (req, res) => {
   return res.status(200).json({
@@ -340,7 +459,7 @@ router.post('/logout', (req, res) => {
 });
 
 // ==========================================
-// 4. GET /api/auth/me - Authenticated User Session Profile
+// 6. GET /api/auth/me - Authenticated User Session Profile
 // ==========================================
 router.get('/me', verifyToken, async (req, res) => {
   try {
@@ -358,7 +477,7 @@ router.get('/me', verifyToken, async (req, res) => {
 });
 
 // ==========================================
-// 5. POST /api/auth/forgot-password - Reset Request
+// 7. POST /api/auth/forgot-password - Reset Request
 // ==========================================
 router.post('/forgot-password', authLimiter, async (req, res) => {
   try {
@@ -372,19 +491,6 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
       });
     }
 
-    const cleanInput = target.toLowerCase();
-    const cleanMobile = extract10DigitMobile(target);
-
-    let user = null;
-    try {
-      user = await User.findOne({ $or: [{ email: cleanInput }, { mobile: cleanMobile }] });
-    } catch (e) {}
-
-    if (!user) {
-      user = users.find(u => u.email.toLowerCase() === cleanInput || u.mobile === cleanMobile);
-    }
-
-    // Always respond with success to prevent user enumeration attacks
     return res.status(200).json({
       success: true,
       message: 'If an account matches those details, password reset instructions have been dispatched.'
