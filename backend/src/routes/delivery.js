@@ -5,9 +5,29 @@ const { deliveryTasks, milkLogs, users, transactions, notifications } = require(
 // GET /api/delivery/dashboard?agentId=
 router.get('/dashboard', (req, res) => {
   const { agentId } = req.query;
-  const agent = users.find(u => u.id === (agentId || 'agent_1') && u.role === 'agent') || users.find(u => u.role === 'agent');
+  let agent = users.find(u => u.id === agentId && (u.role === 'agent' || u.role === 'delivery_agent'));
+  if (!agent) {
+    agent = users.find(u => u.role === 'agent' || u.role === 'delivery_agent');
+  }
 
-  if (!agent) return res.status(404).json({ success: false, message: 'Delivery Agent account not found.' });
+  if (!agent) {
+    return res.json({
+      success: true,
+      agent: {
+        id: 'new_agent',
+        name: 'Delivery Agent',
+        email: 'agent@example.com',
+        assignedArea: 'Sector 14 & Green Valley',
+        vehicleNo: 'GJ-07-MK-4421',
+        balance: 0,
+        totalDeliveries: 0,
+        bankDetails: { accountNo: 'XXXX-XXXX-3341', ifsc: 'HDFC0001290', bankName: 'HDFC Bank' }
+      },
+      transactions: [],
+      farmerPickups: milkLogs,
+      consumerDeliveries: deliveryTasks
+    });
+  }
 
   const agentTxs = transactions.filter(t => t.agentId === agent.id);
 
@@ -17,10 +37,10 @@ router.get('/dashboard', (req, res) => {
       id: agent.id,
       name: agent.name,
       email: agent.email,
-      assignedArea: agent.assignedArea,
-      vehicleNo: agent.vehicleNo,
-      balance: agent.balance || 3450.00,
-      totalDeliveries: agent.totalDeliveries || 69,
+      assignedArea: agent.assignedArea || 'Sector 14 & Green Valley',
+      vehicleNo: agent.vehicleNo || 'GJ-07-MK-4421',
+      balance: agent.balance || 0,
+      totalDeliveries: agent.totalDeliveries || 0,
       bankDetails: agent.bankDetails || { accountNo: 'XXXX-XXXX-3341', ifsc: 'HDFC0001290', bankName: 'HDFC Bank' }
     },
     transactions: agentTxs,
@@ -72,12 +92,12 @@ router.post('/test-and-collect', (req, res) => {
   log.totalPrice = totalPrice;
   log.qualityScore = qualityScore;
   log.status = 'Tested & Picked Up by Agent';
-  log.agentName = agentName || 'John Doe (Delivery Agent)';
+  log.agentName = agentName || 'Delivery Agent';
 
   // Credit Farmer Account Balance
   const farmer = users.find(u => u.id === log.farmerId);
   if (farmer) {
-    farmer.balance += totalPrice;
+    farmer.balance = (farmer.balance || 0) + totalPrice;
 
     transactions.unshift({
       id: `tx_${Date.now()}`,
@@ -101,7 +121,7 @@ router.post('/test-and-collect', (req, res) => {
   }
 
   // Credit Delivery Agent Fee (₹50 per verified collection)
-  const agent = users.find(u => u.id === (agentId || 'agent_1') || u.role === 'agent');
+  const agent = users.find(u => u.id === agentId || u.role === 'agent' || u.role === 'delivery_agent');
   if (agent) {
     agent.balance = (agent.balance || 0) + 50;
     agent.totalDeliveries = (agent.totalDeliveries || 0) + 1;
@@ -141,17 +161,17 @@ router.post('/test-and-collect', (req, res) => {
 // POST /api/delivery/payout - Delivery Agent bank withdrawal
 router.post('/payout', (req, res) => {
   const { agentId, amount } = req.body;
-  const agent = users.find(u => u.id === (agentId || 'agent_1'));
+  const agent = users.find(u => u.id === agentId) || users.find(u => u.role === 'agent' || u.role === 'delivery_agent');
 
   if (!agent) return res.status(404).json({ success: false, message: 'Delivery Agent not found.' });
 
   const payoutAmt = parseFloat(amount) || agent.balance;
 
-  if (payoutAmt <= 0 || payoutAmt > agent.balance) {
-    return res.status(400).json({ success: false, message: 'Invalid withdrawal amount.' });
+  if (payoutAmt <= 0 || payoutAmt > (agent.balance || 0)) {
+    return res.status(400).json({ success: false, message: 'Invalid withdrawal amount or insufficient balance.' });
   }
 
-  agent.balance -= payoutAmt;
+  agent.balance = (agent.balance || 0) - payoutAmt;
 
   const newTx = {
     id: `tx_${Date.now()}`,
@@ -169,7 +189,7 @@ router.post('/payout', (req, res) => {
     id: `notif_${Date.now()}`,
     userId: agent.id,
     title: 'Agent Payout Requested',
-    message: `Withdrawal of ₹${payoutAmt.toFixed(2)} requested to A/C ${agent.bankDetails?.accountNo || 'HDFC'}.`,
+    message: `Withdrawal of ₹${payoutAmt.toFixed(2)} requested to bank account.`,
     time: 'Just now',
     read: false,
     type: 'info'
@@ -198,8 +218,7 @@ router.post('/update-status', (req, res) => {
     if (task) {
       task.status = status;
       
-      // Credit Agent fee on doorstep delivery
-      const agent = users.find(u => u.id === (agentId || 'agent_1') || u.role === 'agent');
+      const agent = users.find(u => u.id === agentId || u.role === 'agent' || u.role === 'delivery_agent');
       if (agent && status === 'Delivered') {
         agent.balance = (agent.balance || 0) + 50;
         agent.totalDeliveries = (agent.totalDeliveries || 0) + 1;

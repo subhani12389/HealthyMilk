@@ -5,15 +5,40 @@ const { users, milkLogs, transactions, notifications } = require('../store');
 // GET /api/farmer/dashboard?farmerId=
 router.get('/dashboard', (req, res) => {
   const { farmerId } = req.query;
-  const farmer = users.find(u => u.id === (farmerId || 'farmer_1') && u.role === 'farmer') || users.find(u => u.role === 'farmer');
+  let farmer = users.find(u => u.id === farmerId && (u.role === 'farmer' || u.role === 'farmer_1'));
+  
+  if (!farmer) {
+    farmer = users.find(u => u.role === 'farmer');
+  }
 
-  if (!farmer) return res.status(404).json({ success: false, message: 'Farmer account not found.' });
+  if (!farmer) {
+    return res.json({
+      success: true,
+      farmer: {
+        id: 'new_farmer',
+        name: 'New Farmer',
+        farmName: 'My Organic Dairy Farm',
+        location: 'Kaira Valley, Anand',
+        balance: 0,
+        rating: 5.0,
+        cattleCount: 10,
+        bankDetails: { accountNo: 'XXXX-XXXX-8921', ifsc: 'SBIN0004123', bankName: 'State Bank of India' }
+      },
+      currentMilkStatus: null,
+      stats: {
+        totalLitersAllTime: 0,
+        totalEarningsAllTime: 0,
+        pendingPayout: 0,
+        logsCount: 0
+      }
+    });
+  }
 
   const logs = milkLogs.filter(l => l.farmerId === farmer.id);
   const todayLog = logs[0] || null;
 
-  const totalLitersAllTime = logs.filter(l => l.status.includes('Collected') || l.status === 'Delivered').reduce((acc, curr) => acc + curr.liters, 0);
-  const totalEarningsAllTime = logs.filter(l => l.status.includes('Collected') || l.status === 'Delivered').reduce((acc, curr) => acc + curr.totalPrice, 0);
+  const totalLitersAllTime = logs.filter(l => l.status.includes('Collected') || l.status.includes('Delivered') || l.status.includes('Tested')).reduce((acc, curr) => acc + curr.liters, 0);
+  const totalEarningsAllTime = logs.filter(l => l.status.includes('Collected') || l.status.includes('Delivered') || l.status.includes('Tested')).reduce((acc, curr) => acc + curr.totalPrice, 0);
 
   return res.json({
     success: true,
@@ -22,10 +47,10 @@ router.get('/dashboard', (req, res) => {
       name: farmer.name,
       farmName: farmer.farmName,
       location: farmer.location,
-      balance: farmer.balance,
-      rating: farmer.rating,
-      cattleCount: farmer.cattleCount,
-      bankDetails: farmer.bankDetails
+      balance: farmer.balance || 0,
+      rating: farmer.rating || 5.0,
+      cattleCount: farmer.cattleCount || 10,
+      bankDetails: farmer.bankDetails || { accountNo: 'XXXX-XXXX-8921', ifsc: 'SBIN0004123', bankName: 'State Bank of India' }
     },
     currentMilkStatus: todayLog ? {
       id: todayLog.id,
@@ -43,7 +68,7 @@ router.get('/dashboard', (req, res) => {
     stats: {
       totalLitersAllTime,
       totalEarningsAllTime,
-      pendingPayout: farmer.balance,
+      pendingPayout: farmer.balance || 0,
       logsCount: logs.length
     }
   });
@@ -53,9 +78,9 @@ router.get('/dashboard', (req, res) => {
 router.post('/request-pickup', (req, res) => {
   const { farmerId, liters, notes } = req.body;
 
-  const farmer = users.find(u => u.id === (farmerId || 'farmer_1'));
+  let farmer = users.find(u => u.id === farmerId);
   if (!farmer) {
-    return res.status(404).json({ success: false, message: 'Farmer not found.' });
+    farmer = users.find(u => u.role === 'farmer') || { id: farmerId || 'farmer_new', name: 'Farmer', farmName: 'Dairy Farm', balance: 0 };
   }
 
   const vol = parseFloat(liters);
@@ -68,37 +93,26 @@ router.post('/request-pickup', (req, res) => {
     farmerId: farmer.id,
     farmerName: farmer.farmName || farmer.name,
     liters: vol,
-    fatPercentage: 0, // Unchecked until Agent inspection
-    snfPercentage: 0, // Unchecked until Agent inspection
+    fatPercentage: 0,
+    snfPercentage: 0,
     lactometerReading: 0,
-    ratePerLiter: 0, // Uncalculated until Agent tests fat & SNF
-    totalPrice: 0,   // Money not added until Agent tests
+    ratePerLiter: 0,
+    totalPrice: 0,
     timestamp: new Date().toISOString(),
     dateStr: 'Today, ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     status: 'Collection Requested (Awaiting Agent Inspection)',
-    agentName: 'John Doe (Delivery Agent)',
+    agentName: 'Assigned Agent',
     notes: notes || 'Fresh morning batch ready for testing',
     qualityScore: 0
   };
 
   milkLogs.unshift(newRequest);
 
-  // Notify delivery agent
-  notifications.unshift({
-    id: `notif_${Date.now()}`,
-    userId: 'agent_1',
-    title: 'New Milk Pickup Requested',
-    message: `${farmer.farmName || farmer.name} requested pickup for ${vol} Liters. Please inspect Fat & SNF.`,
-    time: 'Just now',
-    read: false,
-    type: 'info'
-  });
-
   notifications.unshift({
     id: `notif_${Date.now()}`,
     userId: farmer.id,
     title: 'Pickup Request Submitted',
-    message: `Collection request for ${vol}L submitted! Delivery Agent John Doe is on his way to inspect Fat & SNF % and credit funds.`,
+    message: `Collection request for ${vol}L submitted! Delivery Agent is on their way to inspect Fat & SNF % and credit funds.`,
     time: 'Just now',
     read: false,
     type: 'info'
@@ -114,9 +128,8 @@ router.post('/request-pickup', (req, res) => {
 // GET /api/farmer/history
 router.get('/history', (req, res) => {
   const { farmerId } = req.query;
-  const fId = farmerId || 'farmer_1';
-  const logs = milkLogs.filter(l => l.farmerId === fId);
-  const txs = transactions.filter(t => t.farmerId === fId);
+  const logs = farmerId ? milkLogs.filter(l => l.farmerId === farmerId) : milkLogs;
+  const txs = farmerId ? transactions.filter(t => t.farmerId === farmerId) : transactions;
 
   return res.json({
     success: true,
@@ -128,17 +141,17 @@ router.get('/history', (req, res) => {
 // POST /api/farmer/payout
 router.post('/payout', (req, res) => {
   const { farmerId, amount } = req.body;
-  const farmer = users.find(u => u.id === (farmerId || 'farmer_1'));
+  const farmer = users.find(u => u.id === farmerId) || users.find(u => u.role === 'farmer');
 
-  if (!farmer) return res.status(404).json({ success: false, message: 'Farmer not found.' });
+  if (!farmer) return res.status(404).json({ success: false, message: 'Farmer account not found.' });
 
   const payoutAmt = parseFloat(amount) || farmer.balance;
 
-  if (payoutAmt <= 0 || payoutAmt > farmer.balance) {
-    return res.status(400).json({ success: false, message: 'Invalid withdrawal amount.' });
+  if (payoutAmt <= 0 || payoutAmt > (farmer.balance || 0)) {
+    return res.status(400).json({ success: false, message: 'Invalid withdrawal amount or insufficient balance.' });
   }
 
-  farmer.balance -= payoutAmt;
+  farmer.balance = (farmer.balance || 0) - payoutAmt;
 
   const newTx = {
     id: `tx_${Date.now()}`,
@@ -156,7 +169,7 @@ router.post('/payout', (req, res) => {
     id: `notif_${Date.now()}`,
     userId: farmer.id,
     title: 'Payout Initiated',
-    message: `Withdrawal of ₹${payoutAmt.toFixed(2)} requested to A/C ${farmer.bankDetails?.accountNo || 'SBI'}.`,
+    message: `Withdrawal of ₹${payoutAmt.toFixed(2)} requested to bank account.`,
     time: 'Just now',
     read: false,
     type: 'info'
@@ -173,9 +186,9 @@ router.post('/payout', (req, res) => {
 // PUT /api/farmer/settings
 router.put('/settings', (req, res) => {
   const { farmerId, farmName, location, cattleCount, bankDetails } = req.body;
-  const farmer = users.find(u => u.id === (farmerId || 'farmer_1'));
+  const farmer = users.find(u => u.id === farmerId) || users.find(u => u.role === 'farmer');
 
-  if (!farmer) return res.status(404).json({ success: false, message: 'Farmer not found.' });
+  if (!farmer) return res.status(404).json({ success: false, message: 'Farmer account not found.' });
 
   if (farmName) farmer.farmName = farmName;
   if (location) farmer.location = location;

@@ -5,9 +5,54 @@ const { users, deliveryTasks, notifications } = require('../store');
 // GET /api/consumer/dashboard?consumerId=
 router.get('/dashboard', (req, res) => {
   const { consumerId } = req.query;
-  const consumer = users.find(u => u.id === (consumerId || 'consumer_1') && u.role === 'consumer') || users.find(u => u.role === 'consumer');
+  let consumer = users.find(u => u.id === consumerId && u.role === 'consumer');
+  if (!consumer) {
+    consumer = users.find(u => u.role === 'consumer');
+  }
 
-  const todayTask = deliveryTasks.find(t => t.consumerId === consumer.id) || deliveryTasks[0];
+  if (!consumer) {
+    return res.json({
+      success: true,
+      consumer: {
+        id: 'new_consumer',
+        name: 'Consumer User',
+        email: 'consumer@example.com',
+        address: '123 Green Avenue, Sector 14',
+        phone: '9876543210',
+        subscription: {
+          id: 'sub_new',
+          planName: 'Pure Fresh A2 Cow Milk',
+          dailyLiters: 2,
+          totalDays: 30,
+          daysRemaining: 30,
+          startDate: new Date().toISOString().split('T')[0],
+          endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+          status: 'Active',
+          pricePerLiter: 65,
+          totalAmountPaid: 3900,
+          deliveryTimeSlot: '6:30 AM - 7:30 AM'
+        }
+      },
+      currentMilkStatus: {
+        deliveryId: 'del_101',
+        status: 'Active Plan Subscribed',
+        liters: 2,
+        milkType: 'Pure Fresh A2 Cow Milk',
+        timeSlot: '6:30 AM - 7:30 AM',
+        eta: '07:15 AM',
+        agentName: 'Assigned Delivery Agent',
+        farmerName: 'Local Organic Dairy Farm',
+        qualityDetails: {
+          fat: '4.5%',
+          purity: '100% Pure Organic',
+          temperature: '4°C Chilled'
+        }
+      },
+      history: []
+    });
+  }
+
+  const todayTask = deliveryTasks.find(t => t.consumerId === consumer.id);
   const history = deliveryTasks.filter(t => t.consumerId === consumer.id);
 
   return res.json({
@@ -16,19 +61,31 @@ router.get('/dashboard', (req, res) => {
       id: consumer.id,
       name: consumer.name,
       email: consumer.email,
-      address: consumer.address,
-      phone: consumer.phone,
-      subscription: consumer.subscription
+      address: consumer.address || '123 Green Avenue, Sector 14',
+      phone: consumer.phone || consumer.mobile,
+      subscription: consumer.subscription || {
+        id: `sub_${consumer.id}`,
+        planName: 'Pure Fresh A2 Cow Milk',
+        dailyLiters: 2,
+        totalDays: 30,
+        daysRemaining: 30,
+        startDate: new Date().toISOString().split('T')[0],
+        endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+        status: 'Active',
+        pricePerLiter: 65,
+        totalAmountPaid: 3900,
+        deliveryTimeSlot: '6:30 AM - 7:30 AM'
+      }
     },
     currentMilkStatus: {
-      deliveryId: todayTask ? todayTask.id : 'del_101',
+      deliveryId: todayTask ? todayTask.id : `del_${Date.now()}`,
       status: todayTask ? todayTask.status : 'Out for Delivery',
       liters: consumer.subscription ? consumer.subscription.dailyLiters : 2,
       milkType: consumer.subscription ? consumer.subscription.planName : 'Pure A2 Cow Milk',
       timeSlot: consumer.subscription ? consumer.subscription.deliveryTimeSlot : '6:30 AM - 7:30 AM',
       eta: todayTask ? (todayTask.eta || '07:15 AM') : '07:15 AM',
-      agentName: todayTask ? (todayTask.agentName || 'John Doe') : 'John Doe',
-      farmerName: 'Patel Dairy Farm',
+      agentName: todayTask ? (todayTask.agentName || 'Delivery Agent') : 'Assigned Agent',
+      farmerName: 'Local Dairy Farm',
       qualityDetails: {
         fat: '4.5%',
         purity: '100% Pure Organic',
@@ -42,7 +99,7 @@ router.get('/dashboard', (req, res) => {
 // POST /api/consumer/pause-subscription
 router.post('/pause-subscription', (req, res) => {
   const { consumerId } = req.body;
-  const consumer = users.find(u => u.id === (consumerId || 'consumer_1'));
+  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
 
   if (!consumer || !consumer.subscription) {
     return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
@@ -72,7 +129,7 @@ router.post('/pause-subscription', (req, res) => {
 // POST /api/consumer/update-quantity
 router.post('/update-quantity', (req, res) => {
   const { consumerId, dailyLiters } = req.body;
-  const consumer = users.find(u => u.id === (consumerId || 'consumer_1'));
+  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
 
   if (!consumer || !consumer.subscription) {
     return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
@@ -95,7 +152,7 @@ router.post('/update-quantity', (req, res) => {
 // POST /api/consumer/renew-subscription
 router.post('/renew-subscription', (req, res) => {
   const { consumerId, planDays } = req.body;
-  const consumer = users.find(u => u.id === (consumerId || 'consumer_1'));
+  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
 
   if (!consumer || !consumer.subscription) {
     return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
@@ -128,7 +185,7 @@ router.post('/renew-subscription', (req, res) => {
 // POST /api/consumer/simulate-delivery-day
 router.post('/simulate-delivery-day', (req, res) => {
   const { consumerId } = req.body;
-  const consumer = users.find(u => u.id === (consumerId || 'consumer_1'));
+  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
 
   if (!consumer || !consumer.subscription) {
     return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
@@ -162,7 +219,7 @@ router.post('/simulate-delivery-day', (req, res) => {
 // PUT /api/consumer/settings
 router.put('/settings', (req, res) => {
   const { consumerId, address, phone, deliveryTimeSlot } = req.body;
-  const consumer = users.find(u => u.id === (consumerId || 'consumer_1'));
+  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
 
   if (!consumer) return res.status(404).json({ success: false, message: 'Consumer not found.' });
 
