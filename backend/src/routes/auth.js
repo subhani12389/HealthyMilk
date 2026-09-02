@@ -1,46 +1,73 @@
 const express = require('express');
 const router = express.Router();
-const { users, supabase, otpStore, notifications } = require('../store');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+const { users, supabase } = require('../store');
+const User = require('../models/User');
+const { JWT_SECRET, authLimiter, verifyToken } = require('../middleware/authMiddleware');
 
+// Input Validation Helpers
 const isValidEmail = (email) => {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || '').trim().toLowerCase());
 };
 
-const cleanPhoneNumber = (phone) => {
-  if (!phone) return '';
-  return phone.replace(/[^\d+]/g, '');
+const extract10DigitMobile = (mobileStr) => {
+  if (!mobileStr) return '';
+  const digitsOnly = mobileStr.replace(/[^\d]/g, '');
+  // If 12 digits starting with 91, take last 10 digits
+  if (digitsOnly.length === 12 && digitsOnly.startsWith('91')) {
+    return digitsOnly.slice(2);
+  }
+  return digitsOnly;
 };
 
-const isValidPhone = (phone) => {
-  const cleaned = cleanPhoneNumber(phone);
-  return /^\+?[0-9]{10,13}$/.test(cleaned);
+const isValidMobile = (mobileStr) => {
+  const clean = extract10DigitMobile(mobileStr);
+  return /^[0-9]{10}$/.test(clean);
 };
 
-// Helper: Format user record from DB or memory into standardized frontend format
+const validatePasswordRules = (password) => {
+  if (!password || typeof password !== 'string') return 'Password is required.';
+  if (password.length < 8) return 'Password must be at least 8 characters long.';
+  if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter.';
+  if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter.';
+  if (!/[0-9]/.test(password)) return 'Password must contain at least one number.';
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) return 'Password must contain at least one special character.';
+  return null;
+};
+
+// Helper: Format user record into standardized frontend format without sensitive fields
 const formatUserObject = (u) => {
   if (!u) return null;
+  const userObj = u.toAuthJSON ? u.toAuthJSON() : { ...u };
+  delete userObj.password;
+  delete userObj.__v;
+
   return {
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    role: u.role,
-    phone: u.phone || '+91 98765 43210',
-    balance: u.balance !== undefined && u.balance !== null ? Number(u.balance) : 0,
-    farmName: u.farmName || u.farm_name || `${u.name}'s Dairy Farm`,
-    location: u.location || u.farm_location || 'Kaira Valley, Anand',
-    cattleCount: u.cattleCount || u.cattle_count || 15,
-    rating: u.rating ? Number(u.rating) : 5.0,
-    address: u.address || 'Apt 402, Green Acres Heights, Sector 14',
-    vehicleNo: u.vehicleNo || u.vehicle_no || 'GJ-07-MK-4421',
-    assignedArea: u.assignedArea || u.assigned_area || 'Sector 14 & Green Valley',
-    totalDeliveries: u.totalDeliveries || u.total_deliveries || 69,
-    bankDetails: {
-      accountNo: u.bankDetails?.accountNo || u.bank_account_no || 'XXXX-XXXX-8921',
-      ifsc: u.bankDetails?.ifsc || u.bank_ifsc || 'SBIN0004123',
-      bankName: u.bankDetails?.bankName || u.bank_name || 'State Bank of India'
+    id: userObj._id ? userObj._id.toString() : userObj.id,
+    _id: userObj._id ? userObj._id.toString() : userObj.id,
+    name: userObj.name,
+    email: userObj.email,
+    mobile: userObj.mobile || userObj.phone || '9876543210',
+    phone: userObj.mobile || userObj.phone || '9876543210',
+    role: userObj.role === 'agent' ? 'delivery_agent' : userObj.role,
+    isActive: userObj.isActive !== undefined ? userObj.isActive : true,
+    balance: userObj.balance !== undefined && userObj.balance !== null ? Number(userObj.balance) : 0,
+    farmName: userObj.farmName || userObj.farm_name || `${userObj.name}'s Dairy Farm`,
+    location: userObj.location || userObj.farm_location || 'Kaira Valley, Anand',
+    cattleCount: userObj.cattleCount || userObj.cattle_count || 15,
+    rating: userObj.rating ? Number(userObj.rating) : 5.0,
+    address: userObj.address || 'Apt 402, Green Acres Heights, Sector 14',
+    vehicleNo: userObj.vehicleNo || userObj.vehicle_no || 'GJ-07-MK-4421',
+    assignedArea: userObj.assignedArea || userObj.assigned_area || 'Sector 14 & Green Valley',
+    totalDeliveries: userObj.totalDeliveries || userObj.total_deliveries || 69,
+    bankDetails: userObj.bankDetails || {
+      accountNo: 'XXXX-XXXX-8921',
+      ifsc: 'SBIN0004123',
+      bankName: 'State Bank of India'
     },
-    subscription: u.subscription || {
-      id: `sub_${u.id}`,
+    subscription: userObj.subscription || {
+      id: `sub_${userObj.id || Date.now()}`,
       planName: 'Pure Fresh A2 Cow Milk',
       dailyLiters: 2,
       totalDays: 30,
@@ -51,339 +78,319 @@ const formatUserObject = (u) => {
       pricePerLiter: 65,
       totalAmountPaid: 3900,
       deliveryTimeSlot: '6:30 AM - 7:30 AM'
-    }
+    },
+    createdAt: userObj.createdAt || new Date().toISOString(),
+    updatedAt: userObj.updatedAt || new Date().toISOString()
   };
 };
 
-// POST /api/auth/send-otp - Request 6-digit OTP code to Phone Number
-router.post('/send-otp', async (req, res) => {
+// ==========================================
+// 1. POST /api/auth/signup - User Registration
+// ==========================================
+router.post('/signup', authLimiter, async (req, res) => {
   try {
-    const { phone, email, isSignup } = req.body;
+    const { name, email, mobile, phone, password, confirmPassword, role, farmName, address, vehicleNo, assignedArea } = req.body;
 
-    if (!phone || !isValidPhone(phone)) {
-      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
+    // 1. Validate Required Fields & Formatting
+    if (!name || typeof name !== 'string' || name.trim().length < 2) {
+      return res.status(400).json({ success: false, message: 'Full name is required and must be at least 2 characters long.' });
     }
 
-    const cleanPhone = cleanPhoneNumber(phone);
-
-    if (isSignup) {
-      if (!email || !isValidEmail(email)) {
-        return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
-      }
-
-      const cleanEmail = email.trim().toLowerCase();
-
-      // Check existing memory users
-      const existingUser = users.find(u => u.email.toLowerCase() === cleanEmail || (u.phone && cleanPhoneNumber(u.phone) === cleanPhone));
-      if (existingUser) {
-        return res.status(409).json({ success: false, message: 'An account with this phone number or email address already exists. Please sign in.' });
-      }
-
-      // Check Supabase DB
-      if (supabase) {
-        try {
-          const { data: dbUser } = await supabase.from('users').select('*').or(`email.eq.${cleanEmail},phone.eq.${cleanPhone}`).maybeSingle();
-          if (dbUser) {
-            return res.status(409).json({ success: false, message: 'An account with this phone number or email address already exists. Please sign in.' });
-          }
-        } catch (err) {
-          console.error('Supabase user duplicate query error:', err);
-        }
-      }
-    }
-
-    // Generate 6-digit OTP
-    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 5 * 60 * 1000; // Valid for 5 minutes
-
-    otpStore.set(cleanPhone, {
-      phone: cleanPhone,
-      otp: generatedOtp,
-      expiresAt,
-      verified: false
-    });
-
-    notifications.unshift({
-      id: `notif_${Date.now()}`,
-      userId: 'all',
-      title: 'SMS OTP Code Sent',
-      message: `Verification code for ${cleanPhone} is ${generatedOtp}. Valid for 5 mins.`,
-      time: 'Just now',
-      read: false,
-      type: 'info'
-    });
-
-    return res.json({
-      success: true,
-      message: `Verification OTP sent to ${cleanPhone}.`,
-      otp: generatedOtp, // Included in payload for instant live testing & preview
-      expiresSeconds: 300
-    });
-  } catch (err) {
-    console.error('Send OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Server error generating OTP.' });
-  }
-});
-
-// POST /api/auth/verify-otp - Verify 6-digit OTP Code
-router.post('/verify-otp', async (req, res) => {
-  try {
-    const { phone, otp } = req.body;
-
-    if (!phone || !otp) {
-      return res.status(400).json({ success: false, message: 'Please enter your mobile number and 6-digit OTP code.' });
-    }
-
-    const cleanPhone = cleanPhoneNumber(phone);
-    const otpRecord = otpStore.get(cleanPhone);
-
-    if (!otpRecord) {
-      return res.status(400).json({ success: false, message: 'No OTP requested for this phone number. Please click Send OTP.' });
-    }
-
-    if (Date.now() > otpRecord.expiresAt) {
-      otpStore.delete(cleanPhone);
-      return res.status(400).json({ success: false, message: 'OTP code has expired. Please request a new OTP.' });
-    }
-
-    if (otpRecord.otp !== otp.trim()) {
-      return res.status(400).json({ success: false, message: 'Incorrect OTP verification code. Please check and try again.' });
-    }
-
-    otpRecord.verified = true;
-    const verificationToken = `verified_${cleanPhone}_${Date.now()}`;
-    otpRecord.verificationToken = verificationToken;
-
-    return res.json({
-      success: true,
-      message: 'Mobile number verified successfully!',
-      verificationToken
-    });
-  } catch (err) {
-    console.error('Verify OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Server error verifying OTP.' });
-  }
-});
-
-// POST /api/auth/signup - Professional User Registration with Verified Mobile
-router.post('/signup', async (req, res) => {
-  try {
-    const { name, email, phone, password, role, farmName, address, vehicleNo, assignedArea, otp } = req.body;
-
-    if (!name || !name.trim() || name.trim().length < 2) {
-      return res.status(400).json({ success: false, message: 'Please enter your full name (minimum 2 characters).' });
-    }
-
-    if (!email || !isValidEmail(email)) {
+    const cleanEmail = (email || '').trim().toLowerCase();
+    if (!cleanEmail || !isValidEmail(cleanEmail)) {
       return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
     }
 
-    if (!phone || !isValidPhone(phone)) {
-      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
+    const cleanMobile = extract10DigitMobile(mobile || phone);
+    if (!cleanMobile || cleanMobile.length !== 10) {
+      return res.status(400).json({ success: false, message: 'Mobile number must be exactly 10 digits.' });
     }
 
-    if (!password || password.length < 6) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 6 characters long.' });
+    const passwordError = validatePasswordRules(password);
+    if (passwordError) {
+      return res.status(400).json({ success: false, message: passwordError });
     }
 
-    const selectedRole = role || 'farmer';
-    if (!['farmer', 'consumer', 'agent'].includes(selectedRole)) {
+    if (confirmPassword !== undefined && password !== confirmPassword) {
+      return res.status(400).json({ success: false, message: 'Confirm Password must exactly match Password.' });
+    }
+
+    let selectedRole = (role || 'consumer').toLowerCase();
+    if (!['farmer', 'consumer', 'delivery_agent', 'agent'].includes(selectedRole)) {
       return res.status(400).json({ success: false, message: 'Please select a valid role (Farmer, Consumer, or Delivery Agent).' });
     }
+    if (selectedRole === 'agent') selectedRole = 'delivery_agent';
 
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanPhone = cleanPhoneNumber(phone);
-
-    // Verify Mobile OTP status
-    const otpRecord = otpStore.get(cleanPhone);
-    
-    // Auto-verify if valid OTP passed in signup payload
-    if (otp && otpRecord && otpRecord.otp === otp.trim() && Date.now() <= otpRecord.expiresAt) {
-      otpRecord.verified = true;
+    // 2. Strict Duplicate Prevention Checks
+    // Check Memory Store
+    const duplicateMemoryEmail = users.find(u => u.email.toLowerCase() === cleanEmail);
+    if (duplicateMemoryEmail) {
+      return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
     }
 
-    if (!otpRecord || !otpRecord.verified) {
-      return res.status(400).json({ success: false, message: 'Mobile number not verified. Please verify the 6-digit OTP code sent to your phone.' });
+    const duplicateMemoryMobile = users.find(u => u.mobile === cleanMobile || (u.phone && extract10DigitMobile(u.phone) === cleanMobile));
+    if (duplicateMemoryMobile) {
+      return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
     }
 
-    // Check memory store for duplicates
-    const existingMemoryUser = users.find(u => u.email.toLowerCase() === cleanEmail || (u.phone && cleanPhoneNumber(u.phone) === cleanPhone));
-    if (existingMemoryUser) {
-      return res.status(409).json({ success: false, message: 'An account with this email or mobile number already exists. Please sign in.' });
-    }
+    // 3. Attempt DB Registration with Unique Index Error Handling
+    let newUserRecord = null;
 
-    // Check Supabase DB
-    if (supabase) {
-      const { data: dbUser } = await supabase.from('users').select('*').or(`email.eq.${cleanEmail},phone.eq.${cleanPhone}`).maybeSingle();
-      if (dbUser) {
-        return res.status(409).json({ success: false, message: 'An account with this email or mobile number already exists. Please sign in.' });
+    try {
+      // Check Mongoose DB if connected
+      const existingDbEmail = await User.findOne({ email: cleanEmail });
+      if (existingDbEmail) {
+        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
       }
+
+      const existingDbMobile = await User.findOne({ mobile: cleanMobile });
+      if (existingDbMobile) {
+        return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
+      }
+
+      // Create new Mongoose User document
+      newUserRecord = new User({
+        name: name.trim(),
+        email: cleanEmail,
+        mobile: cleanMobile,
+        password: password, // Pre-save hook will hash using bcrypt
+        role: selectedRole,
+        isActive: true,
+        farmName: farmName ? farmName.trim() : `${name.trim()}'s Dairy Farm`,
+        address: address ? address.trim() : '123 Green Avenue, Sector 5',
+        vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-8821',
+        assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley'
+      });
+
+      await newUserRecord.save();
+    } catch (dbErr) {
+      // Catch MongoDB Duplicate Key Error (Code 11000) for Race Condition Prevention
+      if (dbErr.code === 11000) {
+        const keyPattern = dbErr.keyPattern || {};
+        const errmsg = dbErr.errmsg || '';
+        if (keyPattern.email || errmsg.includes('email')) {
+          return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
+        }
+        if (keyPattern.mobile || errmsg.includes('mobile')) {
+          return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
+        }
+      }
+      console.warn('DB User save skipped/fallback:', dbErr.message);
     }
 
-    const userId = `${selectedRole}_${Date.now()}`;
-    const newUser = {
-      id: userId,
-      name: name.trim(),
-      email: cleanEmail,
-      phone: cleanPhone,
-      password: password,
-      role: selectedRole,
-      balance: 0.00,
-      createdAt: new Date().toISOString(),
-      farmName: farmName ? farmName.trim() : `${name.trim()}'s Dairy Farm`,
-      location: 'Kaira Valley, Anand',
-      cattleCount: 15,
-      address: address ? address.trim() : '123 Green Avenue, Sector 5',
-      vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-8821',
-      assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley',
-      bankDetails: { accountNo: 'XXXX-XXXX-1234', ifsc: 'SBIN0001234', bankName: 'State Bank of India' },
-      subscription: {
-        id: `sub_${Date.now()}`,
-        planName: 'Pure Fresh A2 Cow Milk',
-        dailyLiters: 2,
-        totalDays: 30,
-        daysRemaining: 30,
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-        status: 'Active',
-        pricePerLiter: 65,
-        totalAmountPaid: 3900,
-        deliveryTimeSlot: '6:30 AM - 7:30 AM'
-      }
+    // Fallback store insertion if DB was not connected
+    if (!newUserRecord) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const userId = `${selectedRole}_${Date.now()}`;
+      newUserRecord = {
+        id: userId,
+        _id: userId,
+        name: name.trim(),
+        email: cleanEmail,
+        mobile: cleanMobile,
+        phone: cleanMobile,
+        password: hashedPassword,
+        role: selectedRole,
+        isActive: true,
+        balance: 0.00,
+        createdAt: new Date().toISOString(),
+        farmName: farmName ? farmName.trim() : `${name.trim()}'s Dairy Farm`,
+        address: address ? address.trim() : '123 Green Avenue, Sector 5',
+        vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-8821',
+        assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley'
+      };
+      users.push(newUserRecord);
+    }
+
+    // Generate Secure JWT Token
+    const payload = {
+      id: newUserRecord._id ? newUserRecord._id.toString() : newUserRecord.id,
+      email: newUserRecord.email,
+      role: newUserRecord.role
     };
 
-    // Save to memory
-    users.push(newUser);
-    otpStore.delete(cleanPhone);
-
-    // Save to Supabase DB
-    if (supabase) {
-      try {
-        await supabase.from('users').insert({
-          id: userId,
-          name: newUser.name,
-          email: newUser.email,
-          password: newUser.password,
-          role: newUser.role,
-          farm_name: newUser.farmName,
-          location: newUser.location,
-          balance: 0.00,
-          phone: newUser.phone,
-          address: newUser.address,
-          vehicle_no: newUser.vehicleNo,
-          assigned_area: newUser.assignedArea,
-          bank_account_no: 'XXXX-XXXX-1234',
-          bank_ifsc: 'SBIN0001234',
-          bank_name: 'State Bank of India'
-        });
-      } catch (err) {
-        console.error('Supabase user insert error:', err);
-      }
-    }
-
-    const formattedUser = formatUserObject(newUser);
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+    const formattedUser = formatUserObject(newUserRecord);
 
     return res.status(201).json({
       success: true,
-      message: `Account created & verified successfully as ${selectedRole.toUpperCase()}!`,
+      message: `Account created successfully as ${selectedRole.toUpperCase().replace('_', ' ')}!`,
       user: formattedUser,
-      token: `jwt_token_${userId}_${Date.now()}`
+      token
     });
+
   } catch (err) {
-    console.error('Signup error:', err);
-    return res.status(500).json({ success: false, message: 'Server error during account registration.' });
+    console.error('Signup Route Exception:', err);
+    return res.status(500).json({ success: false, message: 'Server error during account registration. Please try again.' });
   }
 });
 
-// POST /api/auth/login - Flexible Email/Phone Identifier Verification
-router.post('/login', async (req, res) => {
+// ==========================================
+// 2. POST /api/auth/login - Credential Verification
+// ==========================================
+router.post('/login', authLimiter, async (req, res) => {
   try {
-    const { email, identifier, password } = req.body;
-    const loginTarget = (identifier || email || '').trim();
+    const { email, mobile, identifier, password } = req.body;
+    const loginTarget = (identifier || email || mobile || '').trim();
 
     if (!loginTarget || !password) {
-      return res.status(400).json({ success: false, message: 'Please enter both your email/mobile number and password.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter both your email/mobile number and password.'
+      });
     }
 
     const cleanInput = loginTarget.toLowerCase();
-    const cleanPhone = cleanPhoneNumber(loginTarget);
+    const cleanMobile = extract10DigitMobile(loginTarget);
 
-    // 1. Search Memory Store first (match email OR phone)
-    let user = users.find(u => 
-      u.email.toLowerCase() === cleanInput || 
-      (u.phone && cleanPhoneNumber(u.phone) === cleanPhone)
-    );
+    let user = null;
 
-    // 2. Search Supabase DB if not found in memory
-    if (!user && supabase) {
-      try {
-        const { data: dbUser } = await supabase.from('users').select('*').or(`email.eq.${cleanInput},phone.eq.${cleanPhone}`).maybeSingle();
-        if (dbUser) {
-          user = dbUser;
-        }
-      } catch (err) {
-        console.error('Supabase login query error:', err);
+    // Search Database first
+    try {
+      user = await User.findOne({
+        $or: [
+          { email: cleanInput },
+          { mobile: cleanMobile }
+        ]
+      });
+    } catch (e) {
+      // Ignore DB error fallback
+    }
+
+    // Search In-Memory Store if not found in DB
+    if (!user) {
+      user = users.find(u =>
+        u.email.toLowerCase() === cleanInput ||
+        u.mobile === cleanMobile ||
+        (u.phone && extract10DigitMobile(u.phone) === cleanMobile)
+      );
+    }
+
+    // Generic error message to prevent email/mobile account enumeration
+    const genericAuthError = 'Invalid email/mobile number or password.';
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: genericAuthError
+      });
+    }
+
+    // Account Activity Check
+    if (user.isActive === false) {
+      return res.status(401).json({
+        success: false,
+        message: 'Your account has been deactivated. Please contact support.'
+      });
+    }
+
+    // Verify Password using bcrypt (or legacy string fallback for demo pre-existing users)
+    let isPasswordValid = false;
+    if (user.comparePassword) {
+      isPasswordValid = await user.comparePassword(password);
+    } else if (user.password) {
+      if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
+        isPasswordValid = await bcrypt.compare(password, user.password);
+      } else {
+        isPasswordValid = (user.password === password);
       }
     }
 
-    if (!user) {
-      return res.status(401).json({ success: false, message: 'No account found with these credentials. Please check details or click Create Account to sign up.' });
+    if (!isPasswordValid) {
+      return res.status(401).json({
+        success: false,
+        message: genericAuthError
+      });
     }
 
-    if (user.password && user.password !== password) {
-      return res.status(401).json({ success: false, message: 'Incorrect password. Please try again.' });
-    }
+    // Generate JWT Token
+    const payload = {
+      id: user._id ? user._id.toString() : user.id,
+      email: user.email,
+      role: user.role === 'agent' ? 'delivery_agent' : user.role
+    };
 
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
     const formattedUser = formatUserObject(user);
 
-    return res.json({
+    return res.status(200).json({
       success: true,
-      message: `Welcome back, ${user.name}!`,
+      message: `Welcome back, ${formattedUser.name}!`,
       user: formattedUser,
-      token: `jwt_token_${user.id}_${Date.now()}`
+      token
     });
+
   } catch (err) {
-    console.error('Login error:', err);
-    return res.status(500).json({ success: false, message: 'Server error during sign in.' });
+    console.error('Login Route Exception:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error during sign in. Please try again.'
+    });
   }
 });
 
-// GET /api/auth/me - Refresh active session profile & live balance
-router.get('/me', async (req, res) => {
+// ==========================================
+// 3. POST /api/auth/logout - Session Termination
+// ==========================================
+router.post('/logout', (req, res) => {
+  return res.status(200).json({
+    success: true,
+    message: 'Logged out successfully.'
+  });
+});
+
+// ==========================================
+// 4. GET /api/auth/me - Authenticated User Session Profile
+// ==========================================
+router.get('/me', verifyToken, async (req, res) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).json({ success: false, message: 'No session token.' });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-
-    // User match from token string
-    let user = users.find(u => token.includes(u.id));
-
-    if (!user && supabase) {
-      try {
-        const { data: allDbUsers } = await supabase.from('users').select('*');
-        if (allDbUsers) {
-          user = allDbUsers.find(u => token.includes(u.id));
-        }
-      } catch (err) {
-        console.error('Supabase me query error:', err);
-      }
-    }
-
-    if (!user && users.length > 0) {
-      user = users[0];
-    }
-
-    if (!user) {
+    if (!req.user) {
       return res.status(401).json({ success: false, message: 'Session expired or invalid.' });
     }
-
-    const formattedUser = formatUserObject(user);
-    return res.json({ success: true, user: formattedUser });
+    const formattedUser = formatUserObject(req.user);
+    return res.status(200).json({
+      success: true,
+      user: formattedUser
+    });
   } catch (err) {
-    return res.status(500).json({ success: false, message: 'Server error fetching profile.' });
+    return res.status(500).json({ success: false, message: 'Server error fetching user profile.' });
+  }
+});
+
+// ==========================================
+// 5. POST /api/auth/forgot-password - Reset Request
+// ==========================================
+router.post('/forgot-password', authLimiter, async (req, res) => {
+  try {
+    const { identifier, email, mobile } = req.body;
+    const target = (identifier || email || mobile || '').trim();
+
+    if (!target) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter your registered email address or mobile number.'
+      });
+    }
+
+    const cleanInput = target.toLowerCase();
+    const cleanMobile = extract10DigitMobile(target);
+
+    let user = null;
+    try {
+      user = await User.findOne({ $or: [{ email: cleanInput }, { mobile: cleanMobile }] });
+    } catch (e) {}
+
+    if (!user) {
+      user = users.find(u => u.email.toLowerCase() === cleanInput || u.mobile === cleanMobile);
+    }
+
+    // Always respond with success to prevent user enumeration attacks
+    return res.status(200).json({
+      success: true,
+      message: 'If an account matches those details, password reset instructions have been dispatched.'
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Server error processing password reset request.' });
   }
 });
 

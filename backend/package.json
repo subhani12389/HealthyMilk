@@ -9,7 +9,12 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.1",
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.9.4"
   }
 }
