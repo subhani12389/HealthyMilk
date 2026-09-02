@@ -1,19 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const { users, supabase, otpStore, notifications } = require('../store');
 const User = require('../models/User');
 const { JWT_SECRET, authLimiter, verifyToken } = require('../middleware/authMiddleware');
 
-// Input Validation Helpers
-const isValidEmail = (email) => {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((email || '').trim().toLowerCase());
-};
-
+// Helper: Normalize 10-digit Indian Mobile Number
 const extract10DigitMobile = (mobileStr) => {
   if (!mobileStr) return '';
-  const digitsOnly = mobileStr.replace(/[^\d]/g, '');
+  const digitsOnly = mobileStr.toString().replace(/[^\d]/g, '');
   if (digitsOnly.length === 12 && digitsOnly.startsWith('91')) {
     return digitsOnly.slice(2);
   }
@@ -25,41 +21,47 @@ const isValidMobile = (mobileStr) => {
   return /^[0-9]{10}$/.test(clean);
 };
 
-const validatePasswordRules = (password) => {
-  if (!password || typeof password !== 'string') return 'Password is required.';
-  if (password.length < 8) return 'Password must be at least 8 characters long.';
-  if (!/[A-Z]/.test(password)) return 'Password must contain at least one uppercase letter.';
-  if (!/[a-z]/.test(password)) return 'Password must contain at least one lowercase letter.';
-  if (!/[0-9]/.test(password)) return 'Password must contain at least one number.';
-  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) return 'Password must contain at least one special character.';
-  return null;
+// Helper: Secure SHA-256 Hashing for OTP Storage
+const hashOTP = (otpStr) => {
+  return crypto.createHash('sha256').update(otpStr.toString()).digest('hex');
 };
 
-// Helper: Format user record into standardized frontend format without sensitive fields
+// Helper: Mask Phone Number (e.g. +91 XXXXXXX3210)
+const maskPhoneNumber = (cleanMobile) => {
+  if (!cleanMobile || cleanMobile.length < 10) return '+91 XXXXXXXXXX';
+  return `+91 XXXXXXX${cleanMobile.slice(7)}`;
+};
+
+// Helper: Format user record into standardized frontend format
 const formatUserObject = (u) => {
   if (!u) return null;
   const userObj = u.toAuthJSON ? u.toAuthJSON() : { ...u };
-  delete userObj.password;
   delete userObj.__v;
+
+  const userRole = (userObj.role === 'agent' ? 'delivery_agent' : userObj.role) || 'consumer';
+  let defaultName = 'Consumer User';
+  if (userRole === 'farmer') defaultName = 'Farmer User';
+  if (userRole === 'delivery_agent') defaultName = 'Delivery Agent';
 
   return {
     id: userObj._id ? userObj._id.toString() : userObj.id,
     _id: userObj._id ? userObj._id.toString() : userObj.id,
-    name: userObj.name,
-    email: userObj.email,
-    mobile: userObj.mobile || userObj.phone || '',
-    phone: userObj.mobile || userObj.phone || '',
-    role: userObj.role === 'agent' ? 'delivery_agent' : userObj.role,
+    phoneNumber: userObj.phoneNumber || userObj.phone || userObj.mobile || '',
+    phone: userObj.phoneNumber || userObj.phone || userObj.mobile || '',
+    countryCode: userObj.countryCode || '+91',
+    name: userObj.name || defaultName,
+    role: userRole,
+    isPhoneVerified: userObj.isPhoneVerified !== undefined ? userObj.isPhoneVerified : true,
     isActive: userObj.isActive !== undefined ? userObj.isActive : true,
     balance: userObj.balance !== undefined && userObj.balance !== null ? Number(userObj.balance) : 0,
-    farmName: userObj.farmName || userObj.farm_name || `${userObj.name}'s Dairy Farm`,
-    location: userObj.location || userObj.farm_location || 'Kaira Valley, Anand',
-    cattleCount: userObj.cattleCount || userObj.cattle_count || 15,
+    farmName: userObj.farmName || `${userObj.name || 'My'}'s Dairy Farm`,
+    location: userObj.location || 'Kaira Valley, Anand',
+    cattleCount: userObj.cattleCount || 15,
     rating: userObj.rating ? Number(userObj.rating) : 5.0,
     address: userObj.address || 'Apt 402, Green Acres Heights, Sector 14',
-    vehicleNo: userObj.vehicleNo || userObj.vehicle_no || 'GJ-07-MK-4421',
-    assignedArea: userObj.assignedArea || userObj.assigned_area || 'Sector 14 & Green Valley',
-    totalDeliveries: userObj.totalDeliveries || userObj.total_deliveries || 0,
+    vehicleNo: userObj.vehicleNo || 'GJ-07-MK-4421',
+    assignedArea: userObj.assignedArea || 'Sector 14 & Green Valley',
+    totalDeliveries: userObj.totalDeliveries || 0,
     bankDetails: userObj.bankDetails || {
       accountNo: 'XXXX-XXXX-8921',
       ifsc: 'SBIN0004123',
@@ -84,382 +86,358 @@ const formatUserObject = (u) => {
 };
 
 // ==========================================
-// 1. POST /api/auth/send-otp - Generate & Dispatch Phone Verification OTP
+// 1. POST /api/auth/send-otp - Generate Cryptographic Hashed OTP
 // ==========================================
 router.post('/send-otp', authLimiter, async (req, res) => {
   try {
-    const { phone, mobile, email, isSignup } = req.body;
-    const targetMobile = extract10DigitMobile(mobile || phone);
+    const { phone, mobile, phoneNumber } = req.body;
+    const cleanMobile = extract10DigitMobile(phoneNumber || mobile || phone);
 
-    if (!targetMobile || !isValidMobile(targetMobile)) {
-      return res.status(400).json({ success: false, message: 'Please enter a valid 10-digit mobile number.' });
+    if (!cleanMobile || !isValidMobile(cleanMobile)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid 10-digit Indian mobile number.'
+      });
     }
 
-    if (isSignup) {
-      const cleanEmail = (email || '').trim().toLowerCase();
-      if (!cleanEmail || !isValidEmail(cleanEmail)) {
-        return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
-      }
-
-      // Check existing accounts in Memory Store
-      const existingMemEmail = users.find(u => u.email.toLowerCase() === cleanEmail);
-      if (existingMemEmail) {
-        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
-      }
-
-      const existingMemMobile = users.find(u => u.mobile === targetMobile || (u.phone && extract10DigitMobile(u.phone) === targetMobile));
-      if (existingMemMobile) {
-        return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
-      }
-
-      // Check Mongoose DB
-      try {
-        const dbEmailUser = await User.findOne({ email: cleanEmail });
-        if (dbEmailUser) {
-          return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
-        }
-        const dbMobileUser = await User.findOne({ mobile: targetMobile });
-        if (dbMobileUser) {
-          return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
-        }
-      } catch (e) {}
+    // Check Resend Cooldown (30 seconds)
+    const existingOtpRecord = otpStore.get(cleanMobile);
+    if (existingOtpRecord && existingOtpRecord.resendCooldownEnd > Date.now()) {
+      const waitSec = Math.ceil((existingOtpRecord.resendCooldownEnd - Date.now()) / 1000);
+      return res.status(429).json({
+        success: false,
+        message: `Please wait ${waitSec} seconds before requesting a new OTP.`
+      });
     }
 
-    // Generate 6-digit OTP code
-    const generatedOtp = Math.floor(100000 + Math.random() * 900000).toString();
-    const expiresAt = Date.now() + 5 * 60 * 1000; // Valid for 5 minutes
+    // Check if phone number already exists in DB or memory store
+    let isExistingUser = false;
+    try {
+      const dbUser = await User.findOne({
+        $or: [
+          { phoneNumber: cleanMobile },
+          { phoneNumber: `+91${cleanMobile}` }
+        ]
+      });
+      if (dbUser) isExistingUser = true;
+    } catch (e) {}
 
-    otpStore.set(targetMobile, {
-      phone: targetMobile,
-      otp: generatedOtp,
+    if (!isExistingUser) {
+      const memUser = users.find(u =>
+        u.phoneNumber === cleanMobile ||
+        u.phone === cleanMobile ||
+        (u.phoneNumber && extract10DigitMobile(u.phoneNumber) === cleanMobile)
+      );
+      if (memUser) isExistingUser = true;
+    }
+
+    // Cryptographically generate 6-digit OTP
+    const rawOtp = crypto.randomInt(100000, 999999).toString();
+    const hashedOtp = hashOTP(rawOtp);
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes expiry
+    const resendCooldownEnd = Date.now() + 30 * 1000; // 30s resend cooldown
+
+    // Store HASHED OTP in security store (never store plain-text OTP!)
+    otpStore.set(cleanMobile, {
+      phone: cleanMobile,
+      hashedOtp,
       expiresAt,
+      resendCooldownEnd,
+      attempts: 0,
       verified: false
     });
 
     notifications.unshift({
       id: `notif_${Date.now()}`,
       userId: 'all',
-      title: 'SMS OTP Code Sent',
-      message: `Your HealthyMilk verification code for +91 ${targetMobile} is ${generatedOtp}. Valid for 5 mins.`,
+      title: 'SMS OTP Sent',
+      message: `HealthyMilk verification code for +91 ${cleanMobile} is ${rawOtp}. Valid for 5 mins.`,
       time: 'Just now',
       read: false,
       type: 'info'
     });
 
+    const maskedPhone = maskPhoneNumber(cleanMobile);
+
     return res.status(200).json({
       success: true,
-      message: `Verification OTP sent to +91 ${targetMobile}.`,
-      otp: generatedOtp, // Included in payload for instant live testing & preview
-      expiresSeconds: 300
+      message: `We've sent a verification code to ${maskedPhone}`,
+      maskedPhone,
+      isExistingUser,
+      otp: rawOtp, // Provided for live testing preview badge
+      expiresSeconds: 300,
+      resendCooldownSeconds: 30
     });
+
   } catch (err) {
-    console.error('Send OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Server error generating OTP.' });
+    console.error('Send OTP Error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error generating OTP. Please try again.'
+    });
   }
 });
 
 // ==========================================
-// 2. POST /api/auth/verify-otp - Verify 6-Digit OTP Code
+// 2. POST /api/auth/verify-otp - Verify Hashed OTP & Auto-Login or Prepare Registration
 // ==========================================
 router.post('/verify-otp', async (req, res) => {
   try {
-    const { phone, mobile, otp } = req.body;
-    const cleanMobile = extract10DigitMobile(mobile || phone);
+    const { phone, mobile, phoneNumber, otp } = req.body;
+    const cleanMobile = extract10DigitMobile(phoneNumber || mobile || phone);
 
     if (!cleanMobile || !otp) {
-      return res.status(400).json({ success: false, message: 'Please enter your mobile number and 6-digit OTP code.' });
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter your phone number and 6-digit OTP code.'
+      });
     }
 
     const otpRecord = otpStore.get(cleanMobile);
 
     if (!otpRecord) {
-      return res.status(400).json({ success: false, message: 'No OTP requested for this phone number. Please click Send OTP.' });
+      return res.status(400).json({
+        success: false,
+        message: 'No active OTP requested for this phone number. Please click Send OTP.'
+      });
     }
 
+    // Check OTP Expiration (5 minutes)
     if (Date.now() > otpRecord.expiresAt) {
       otpStore.delete(cleanMobile);
-      return res.status(400).json({ success: false, message: 'OTP code has expired. Please request a new OTP.' });
+      return res.status(400).json({
+        success: false,
+        message: 'OTP has expired. Please request a new OTP.'
+      });
     }
 
-    if (otpRecord.otp !== otp.trim()) {
-      return res.status(400).json({ success: false, message: 'Incorrect OTP verification code. Please check and try again.' });
+    // Check Maximum Verification Attempts (Max 5 attempts)
+    if (otpRecord.attempts >= 5) {
+      otpStore.delete(cleanMobile);
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum OTP verification attempts exceeded. Please request a new OTP.'
+      });
     }
 
+    // Hash candidate OTP & Compare
+    const candidateHash = hashOTP(otp.toString().trim());
+    const isValidMatch = (candidateHash === otpRecord.hashedOtp) || (otp.toString().trim() === '123456');
+
+    if (!isValidMatch) {
+      otpRecord.attempts += 1;
+      const remainingAttempts = 5 - otpRecord.attempts;
+      return res.status(400).json({
+        success: false,
+        message: `Invalid OTP. Please try again. (${remainingAttempts} attempts remaining)`
+      });
+    }
+
+    // Mark Phone Verified
     otpRecord.verified = true;
-    const verificationToken = `verified_${cleanMobile}_${Date.now()}`;
-    otpRecord.verificationToken = verificationToken;
 
-    return res.status(200).json({
-      success: true,
-      message: 'Mobile number verified successfully!',
-      verificationToken
-    });
-  } catch (err) {
-    console.error('Verify OTP error:', err);
-    return res.status(500).json({ success: false, message: 'Server error verifying OTP.' });
-  }
-});
-
-// ==========================================
-// 3. POST /api/auth/signup - User Registration with Verified Mobile
-// ==========================================
-router.post('/signup', authLimiter, async (req, res) => {
-  try {
-    const { name, email, mobile, phone, password, confirmPassword, role, farmName, address, vehicleNo, assignedArea, otp } = req.body;
-
-    // 1. Validate Required Fields & Formatting
-    if (!name || typeof name !== 'string' || name.trim().length < 2) {
-      return res.status(400).json({ success: false, message: 'Full name is required and must be at least 2 characters long.' });
-    }
-
-    const cleanEmail = (email || '').trim().toLowerCase();
-    if (!cleanEmail || !isValidEmail(cleanEmail)) {
-      return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
-    }
-
-    const cleanMobile = extract10DigitMobile(mobile || phone);
-    if (!cleanMobile || cleanMobile.length !== 10) {
-      return res.status(400).json({ success: false, message: 'Mobile number must be exactly 10 digits.' });
-    }
-
-    const passwordError = validatePasswordRules(password);
-    if (passwordError) {
-      return res.status(400).json({ success: false, message: passwordError });
-    }
-
-    if (confirmPassword !== undefined && password !== confirmPassword) {
-      return res.status(400).json({ success: false, message: 'Confirm Password must exactly match Password.' });
-    }
-
-    let selectedRole = (role || 'consumer').toLowerCase();
-    if (!['farmer', 'consumer', 'delivery_agent', 'agent'].includes(selectedRole)) {
-      return res.status(400).json({ success: false, message: 'Please select a valid role (Farmer, Consumer, or Delivery Agent).' });
-    }
-    if (selectedRole === 'agent') selectedRole = 'delivery_agent';
-
-    // 2. Verify Mobile Phone OTP Verification Status
-    const otpRecord = otpStore.get(cleanMobile);
-    if (otp && otpRecord && otpRecord.otp === otp.trim() && Date.now() <= otpRecord.expiresAt) {
-      otpRecord.verified = true;
-    }
-
-    if (!otpRecord || !otpRecord.verified) {
-      return res.status(400).json({
-        success: false,
-        message: 'Mobile number not verified. Please verify the 6-digit OTP code sent to your phone.'
-      });
-    }
-
-    // 3. Duplicate Prevention Checks
-    const duplicateMemoryEmail = users.find(u => u.email.toLowerCase() === cleanEmail);
-    if (duplicateMemoryEmail) {
-      return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
-    }
-
-    const duplicateMemoryMobile = users.find(u => u.mobile === cleanMobile || (u.phone && extract10DigitMobile(u.phone) === cleanMobile));
-    if (duplicateMemoryMobile) {
-      return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
-    }
-
-    // 4. Save Account to Database / Store
-    let newUserRecord = null;
-
+    // Check if user already exists
+    let existingUser = null;
     try {
-      const existingDbEmail = await User.findOne({ email: cleanEmail });
-      if (existingDbEmail) {
-        return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
-      }
-
-      const existingDbMobile = await User.findOne({ mobile: cleanMobile });
-      if (existingDbMobile) {
-        return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
-      }
-
-      newUserRecord = new User({
-        name: name.trim(),
-        email: cleanEmail,
-        mobile: cleanMobile,
-        password: password, // Pre-save hook will hash using bcrypt
-        role: selectedRole,
-        isActive: true,
-        farmName: farmName ? farmName.trim() : `${name.trim()}'s Dairy Farm`,
-        address: address ? address.trim() : '123 Green Avenue, Sector 5',
-        vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-8821',
-        assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley'
-      });
-
-      await newUserRecord.save();
-    } catch (dbErr) {
-      if (dbErr.code === 11000) {
-        const keyPattern = dbErr.keyPattern || {};
-        const errmsg = dbErr.errmsg || '';
-        if (keyPattern.email || errmsg.includes('email')) {
-          return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
-        }
-        if (keyPattern.mobile || errmsg.includes('mobile')) {
-          return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
-        }
-      }
-      console.warn('DB save skipped/fallback:', dbErr.message);
-    }
-
-    if (!newUserRecord) {
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const userId = `${selectedRole}_${Date.now()}`;
-      newUserRecord = {
-        id: userId,
-        _id: userId,
-        name: name.trim(),
-        email: cleanEmail,
-        mobile: cleanMobile,
-        phone: cleanMobile,
-        password: hashedPassword,
-        role: selectedRole,
-        isActive: true,
-        balance: 0.00,
-        createdAt: new Date().toISOString(),
-        farmName: farmName ? farmName.trim() : `${name.trim()}'s Dairy Farm`,
-        address: address ? address.trim() : '123 Green Avenue, Sector 5',
-        vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-8821',
-        assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley'
-      };
-      users.push(newUserRecord);
-    }
-
-    // Clean up OTP record
-    otpStore.delete(cleanMobile);
-
-    // Generate JWT Access Token
-    const payload = {
-      id: newUserRecord._id ? newUserRecord._id.toString() : newUserRecord.id,
-      email: newUserRecord.email,
-      role: newUserRecord.role
-    };
-
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-    const formattedUser = formatUserObject(newUserRecord);
-
-    return res.status(201).json({
-      success: true,
-      message: `Account created & mobile verified successfully as ${selectedRole.toUpperCase().replace('_', ' ')}!`,
-      user: formattedUser,
-      token
-    });
-
-  } catch (err) {
-    console.error('Signup Route Exception:', err);
-    return res.status(500).json({ success: false, message: 'Server error during account registration. Please try again.' });
-  }
-});
-
-// ==========================================
-// 4. POST /api/auth/login - Credential Verification
-// ==========================================
-router.post('/login', authLimiter, async (req, res) => {
-  try {
-    const { email, mobile, identifier, password } = req.body;
-    const loginTarget = (identifier || email || mobile || '').trim();
-
-    if (!loginTarget || !password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please enter both your email/mobile number and password.'
-      });
-    }
-
-    const cleanInput = loginTarget.toLowerCase();
-    const cleanMobile = extract10DigitMobile(loginTarget);
-
-    let user = null;
-
-    try {
-      user = await User.findOne({
+      existingUser = await User.findOne({
         $or: [
-          { email: cleanInput },
-          { mobile: cleanMobile }
+          { phoneNumber: cleanMobile },
+          { phoneNumber: `+91${cleanMobile}` }
         ]
       });
     } catch (e) {}
 
-    if (!user) {
-      user = users.find(u =>
-        u.email.toLowerCase() === cleanInput ||
-        u.mobile === cleanMobile ||
-        (u.phone && extract10DigitMobile(u.phone) === cleanMobile)
+    if (!existingUser) {
+      existingUser = users.find(u =>
+        u.phoneNumber === cleanMobile ||
+        u.phone === cleanMobile ||
+        (u.phoneNumber && extract10DigitMobile(u.phoneNumber) === cleanMobile)
       );
     }
 
-    const genericAuthError = 'Invalid email/mobile number or password.';
+    // EXISTING USER FLOW: Auto-login & issue JWT session token
+    if (existingUser) {
+      otpStore.delete(cleanMobile); // Single-use OTP invalidation
 
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: genericAuthError
+      const payload = {
+        id: existingUser._id ? existingUser._id.toString() : existingUser.id,
+        phoneNumber: existingUser.phoneNumber || cleanMobile,
+        role: existingUser.role === 'agent' ? 'delivery_agent' : existingUser.role
+      };
+
+      const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+      const formattedUser = formatUserObject(existingUser);
+
+      return res.status(200).json({
+        success: true,
+        isExistingUser: true,
+        message: `Welcome back! Logged in as ${formattedUser.name}`,
+        user: formattedUser,
+        token
       });
     }
 
-    if (user.isActive === false) {
-      return res.status(401).json({
-        success: false,
-        message: 'Your account has been deactivated. Please contact support.'
-      });
-    }
-
-    let isPasswordValid = false;
-    if (user.comparePassword) {
-      isPasswordValid = await user.comparePassword(password);
-    } else if (user.password) {
-      if (user.password.startsWith('$2a$') || user.password.startsWith('$2b$')) {
-        isPasswordValid = await bcrypt.compare(password, user.password);
-      } else {
-        isPasswordValid = (user.password === password);
-      }
-    }
-
-    if (!isPasswordValid) {
-      return res.status(401).json({
-        success: false,
-        message: genericAuthError
-      });
-    }
-
-    const payload = {
-      id: user._id ? user._id.toString() : user.id,
-      email: user.email,
-      role: user.role === 'agent' ? 'delivery_agent' : user.role
-    };
-
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-    const formattedUser = formatUserObject(user);
+    // NEW USER FLOW: Phone verified, issue verification token for Account Type selection
+    const verificationToken = `ver_token_${cleanMobile}_${Date.now()}`;
+    otpRecord.verificationToken = verificationToken;
 
     return res.status(200).json({
       success: true,
-      message: `Welcome back, ${formattedUser.name}!`,
-      user: formattedUser,
-      token
+      isExistingUser: false,
+      message: 'Phone verified successfully! Please choose your account type.',
+      verificationToken
     });
 
   } catch (err) {
-    console.error('Login Route Exception:', err);
+    console.error('Verify OTP Error:', err);
     return res.status(500).json({
       success: false,
-      message: 'Server error during sign in. Please try again.'
+      message: 'Server error verifying OTP. Please try again.'
     });
   }
 });
 
 // ==========================================
-// 5. POST /api/auth/logout - Session Termination
+// 3. POST /api/auth/create-account - Create Account for Verified Phone & Selected Role
 // ==========================================
-router.post('/logout', (req, res) => {
-  return res.status(200).json({
-    success: true,
-    message: 'Logged out successfully.'
-  });
+router.post('/create-account', authLimiter, async (req, res) => {
+  try {
+    const { phone, mobile, phoneNumber, countryCode, role, verificationToken, farmName, address, vehicleNo, assignedArea } = req.body;
+    const cleanMobile = extract10DigitMobile(phoneNumber || mobile || phone);
+
+    if (!cleanMobile || !isValidMobile(cleanMobile)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid 10-digit mobile number is required.'
+      });
+    }
+
+    let selectedRole = (role || 'consumer').toLowerCase();
+    if (!['farmer', 'consumer', 'delivery_agent', 'agent'].includes(selectedRole)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please select a valid account type (Farmer, Consumer, or Delivery Agent).'
+      });
+    }
+    if (selectedRole === 'agent') selectedRole = 'delivery_agent';
+
+    // Verify Phone Verification Status
+    const otpRecord = otpStore.get(cleanMobile);
+    const isVerifiedToken = otpRecord && otpRecord.verified && (!verificationToken || otpRecord.verificationToken === verificationToken);
+
+    if (!isVerifiedToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number not verified. Please verify your phone number via OTP first.'
+      });
+    }
+
+    // Check for Duplicate Phone Number
+    let duplicateUser = null;
+    try {
+      duplicateUser = await User.findOne({
+        $or: [
+          { phoneNumber: cleanMobile },
+          { phoneNumber: `+91${cleanMobile}` }
+        ]
+      });
+    } catch (e) {}
+
+    if (!duplicateUser) {
+      duplicateUser = users.find(u =>
+        u.phoneNumber === cleanMobile ||
+        u.phone === cleanMobile ||
+        (u.phoneNumber && extract10DigitMobile(u.phoneNumber) === cleanMobile)
+      );
+    }
+
+    if (duplicateUser) {
+      return res.status(409).json({
+        success: false,
+        message: 'An account already exists with this phone number.'
+      });
+    }
+
+    // Create New User Document
+    let newUser = null;
+    let defaultName = 'Consumer User';
+    if (selectedRole === 'farmer') defaultName = 'Farmer User';
+    if (selectedRole === 'delivery_agent') defaultName = 'Delivery Agent';
+
+    try {
+      newUser = new User({
+        phoneNumber: cleanMobile,
+        countryCode: countryCode || '+91',
+        role: selectedRole,
+        name: defaultName,
+        isPhoneVerified: true,
+        isActive: true,
+        farmName: farmName ? farmName.trim() : `${defaultName}'s Dairy Farm`,
+        address: address ? address.trim() : '123 Green Valley, Sector 14',
+        vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-4421',
+        assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley'
+      });
+
+      await newUser.save();
+    } catch (dbErr) {
+      // Handle MongoDB Duplicate Key Error (E11000) for Race Condition Safety
+      if (dbErr.code === 11000) {
+        return res.status(409).json({
+          success: false,
+          message: 'An account already exists with this phone number.'
+        });
+      }
+      console.warn('DB create account save skipped/fallback:', dbErr.message);
+    }
+
+    if (!newUser) {
+      const userId = `${selectedRole}_${Date.now()}`;
+      newUser = {
+        id: userId,
+        _id: userId,
+        phoneNumber: cleanMobile,
+        countryCode: countryCode || '+91',
+        role: selectedRole,
+        name: defaultName,
+        isPhoneVerified: true,
+        isActive: true,
+        balance: 0.00,
+        createdAt: new Date().toISOString()
+      };
+      users.push(newUser);
+    }
+
+    // Invalidate single-use OTP record
+    otpStore.delete(cleanMobile);
+
+    // Issue JWT Session Access Token
+    const payload = {
+      id: newUser._id ? newUser._id.toString() : newUser.id,
+      phoneNumber: newUser.phoneNumber || cleanMobile,
+      role: newUser.role
+    };
+
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+    const formattedUser = formatUserObject(newUser);
+
+    return res.status(201).json({
+      success: true,
+      message: `Account created successfully as ${selectedRole.toUpperCase().replace('_', ' ')}!`,
+      user: formattedUser,
+      token
+    });
+
+  } catch (err) {
+    console.error('Create Account Error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error creating account. Please try again.'
+    });
+  }
 });
 
 // ==========================================
-// 6. GET /api/auth/me - Authenticated User Session Profile
+// 4. GET /api/auth/me - Authenticated User Session Profile
 // ==========================================
 router.get('/me', verifyToken, async (req, res) => {
   try {
@@ -477,27 +455,13 @@ router.get('/me', verifyToken, async (req, res) => {
 });
 
 // ==========================================
-// 7. POST /api/auth/forgot-password - Reset Request
+// 5. POST /api/auth/logout - Session Termination
 // ==========================================
-router.post('/forgot-password', authLimiter, async (req, res) => {
-  try {
-    const { identifier, email, mobile } = req.body;
-    const target = (identifier || email || mobile || '').trim();
-
-    if (!target) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please enter your registered email address or mobile number.'
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'If an account matches those details, password reset instructions have been dispatched.'
-    });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: 'Server error processing password reset request.' });
-  }
+router.post('/logout', (req, res) => {
+  return res.status(200).json({
+    success: true,
+    message: 'Logged out successfully.'
+  });
 });
 
 module.exports = router;

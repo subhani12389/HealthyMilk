@@ -1,32 +1,16 @@
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
-  name: {
+  phoneNumber: {
     type: String,
-    required: [true, 'Full name is required'],
-    trim: true,
-    minlength: [2, 'Name must be at least 2 characters long']
-  },
-  email: {
-    type: String,
-    required: [true, 'Email address is required'],
+    required: [true, 'Phone number is required'],
     unique: true,
-    lowercase: true,
-    trim: true,
-    match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Please enter a valid email address']
+    trim: true
   },
-  mobile: {
+  countryCode: {
     type: String,
-    required: [true, 'Mobile number is required'],
-    unique: true,
-    trim: true,
-    match: [/^[0-9]{10}$/, 'Mobile number must be exactly 10 digits']
-  },
-  password: {
-    type: String,
-    required: [true, 'Password is required'],
-    minlength: [8, 'Password must be at least 8 characters long']
+    default: '+91',
+    trim: true
   },
   role: {
     type: String,
@@ -34,9 +18,21 @@ const userSchema = new mongoose.Schema({
     required: [true, 'User role is required'],
     default: 'consumer'
   },
+  isPhoneVerified: {
+    type: Boolean,
+    default: true
+  },
   isActive: {
     type: Boolean,
     default: true
+  },
+  name: {
+    type: String,
+    default: function() {
+      if (this.role === 'farmer') return 'Farmer User';
+      if (this.role === 'delivery_agent' || this.role === 'agent') return 'Delivery Agent';
+      return 'Consumer User';
+    }
   },
   // Additional role-specific fields for seamless HealthyMilk dashboard integration
   farmName: { type: String, default: '' },
@@ -73,35 +69,15 @@ const userSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Explicit unique indexes for email and mobile to enforce DB-level duplicate prevention
-userSchema.index({ email: 1 }, { unique: true });
-userSchema.index({ mobile: 1 }, { unique: true });
+// Explicit unique index for phoneNumber to enforce DB-level duplicate prevention
+userSchema.index({ phoneNumber: 1 }, { unique: true });
 
-// Pre-save hook: Hash password before saving if modified
-userSchema.pre('save', async function(next) {
-  if (!this.isModified('password')) return next();
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Instance Method: Verify password
-userSchema.methods.comparePassword = async function(candidatePassword) {
-  return await bcrypt.compare(candidatePassword, this.password);
-};
-
-// Instance Method: Sanitize user object for API responses (never return password)
+// Instance Method: Sanitize user object for API responses
 userSchema.methods.toAuthJSON = function() {
   const obj = this.toObject ? this.toObject() : { ...this };
-  delete obj.password;
   delete obj.__v;
-  // Map fields for frontend compatibility
   obj.id = obj._id ? obj._id.toString() : obj.id;
-  obj.phone = obj.mobile || obj.phone;
+  obj.phone = obj.phoneNumber || obj.phone;
   return obj;
 };
 
