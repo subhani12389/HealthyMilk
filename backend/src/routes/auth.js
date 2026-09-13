@@ -94,6 +94,12 @@ router.post('/send-otp', authLimiter, async (req, res) => {
     const { phone, mobile, phoneNumber } = req.body;
     const cleanMobile = extract10DigitMobile(phoneNumber || mobile || phone);
 
+    console.log("--------------------------------------------------");
+    console.log("OTP request received");
+    console.log("Phone:", cleanMobile);
+    console.log("Normalized E.164 Phone:", `+91${cleanMobile}`);
+    console.log("--------------------------------------------------");
+
     if (!cleanMobile || !isValidMobile(cleanMobile)) {
       return res.status(400).json({
         success: false,
@@ -133,7 +139,8 @@ router.post('/send-otp', authLimiter, async (req, res) => {
     }
 
     // Cryptographically generate 6-digit OTP
-    const rawOtp = crypto.randomInt(100000, 999999).toString();
+    const rawOtp = crypto.randomInt(100000, 1000000).toString();
+    console.log("OTP generated successfully");
     const hashedOtp = hashOTP(rawOtp);
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes expiry
     const resendCooldownEnd = Date.now() + 30 * 1000; // 30s resend cooldown
@@ -148,8 +155,17 @@ router.post('/send-otp', authLimiter, async (req, res) => {
       verified: false
     });
 
-    // Send Real SMS via SMS Gateway (Twilio / Fast2SMS / Custom HTTP SMS Gateway)
+    // Awaited Real SMS Delivery Call
     const smsResult = await sendSMS({ toPhone: cleanMobile, otp: rawOtp });
+
+    // Handle SMS Provider Rejection / Failure
+    if (!smsResult.success && smsResult.provider !== 'none') {
+      console.error("SMS provider rejected request:", smsResult.error);
+      return res.status(502).json({
+        success: false,
+        message: `SMS provider rejected request: ${smsResult.error || 'Failed to deliver SMS'}`
+      });
+    }
 
     notifications.unshift({
       id: `notif_${Date.now()}`,
@@ -168,7 +184,8 @@ router.post('/send-otp', authLimiter, async (req, res) => {
       message: `We've sent a verification code to ${maskedPhone}`,
       maskedPhone,
       isExistingUser,
-      otp: rawOtp, // Provided for live testing preview badge
+      smsDelivered: smsResult.success,
+      smsProvider: smsResult.provider,
       expiresSeconds: 300,
       resendCooldownSeconds: 30
     });

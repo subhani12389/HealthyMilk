@@ -61,6 +61,7 @@ export default function AuthPage() {
       return;
     }
 
+    console.log("Sending OTP to:", clean);
     setLoading(true);
 
     try {
@@ -76,16 +77,9 @@ export default function AuthPage() {
       if (data.success) {
         setMaskedPhone(data.maskedPhone || `+91 XXXXXXX${clean.slice(7)}`);
         setIsExistingUser(Boolean(data.isExistingUser));
-        setSentOtpPreview(data.otp || '');
         setSuccessMsg(data.message || `We've sent a verification code to +91 XXXXXXX${clean.slice(7)}`);
         setStep(2);
         setResendTimer(30);
-        
-        // Auto-fill OTP in demo mode for instant testing convenience
-        if (data.otp) {
-          const digits = data.otp.toString().split('').slice(0, 6);
-          setOtpDigits(digits);
-        }
 
         // Focus first OTP box
         setTimeout(() => {
@@ -433,24 +427,6 @@ export default function AuthPage() {
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                 We've sent a 6-digit verification code to your phone.
               </p>
-
-              {sentOtpPreview && (
-                <div style={{
-                  marginTop: '0.75rem',
-                  background: 'var(--bg-card)',
-                  border: '1px dashed var(--accent-emerald)',
-                  borderRadius: '10px',
-                  padding: '0.45rem 0.75rem',
-                  fontSize: '0.8rem',
-                  fontWeight: 700,
-                  color: 'var(--accent-emerald)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem'
-                }}>
-                  <Sparkles size={15} /> Demo OTP Code: <strong style={{ letterSpacing: '2px', fontSize: '0.95rem' }}>{sentOtpPreview}</strong>
-                </div>
-              )}
             </div>
 
             {/* 6 Individual Auto-Focusing OTP Boxes */}

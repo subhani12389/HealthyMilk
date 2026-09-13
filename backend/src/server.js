@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -15,13 +16,22 @@ const PORT = process.env.PORT || 5000;
 // Initialize Database Connection
 connectDB();
 
+// Audit SMS Provider Configuration Status
+const isSmsConfigured = !!(
+  process.env.FAST2SMS_API_KEY ||
+  process.env.TWILIO_ACCOUNT_SID ||
+  process.env.MSG91_AUTH_KEY ||
+  process.env.SMS_API_URL
+);
+console.log(`📱 SMS API Configured: ${isSmsConfigured ? 'YES ✅' : 'NO (Set FAST2SMS_API_KEY, TWILIO, MSG91, or SMS_API_URL in .env) ⚠️'}`);
+
 // Security Headers Middleware (Helmet)
 app.use(helmet({
-  contentSecurityPolicy: false, // Disable CSP header to allow Vite dev inline scripts if needed
+  contentSecurityPolicy: false,
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 
-// Universal CORS Middleware for all origins & preflight OPTIONS
+// Universal CORS Middleware
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -36,6 +46,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
     app: 'HealthyMilk Production API',
+    smsConfigured: isSmsConfigured,
     time: new Date().toISOString()
   });
 });
@@ -44,7 +55,7 @@ app.get('/', (req, res) => {
   res.json({
     status: 'online',
     app: 'HealthyMilk Production REST API Server',
-    endpoints: ['/api/health', '/api/auth/login', '/api/auth/signup', '/api/auth/me', '/api/farmer/dashboard', '/api/consumer/dashboard', '/api/delivery/dashboard']
+    endpoints: ['/api/health', '/api/auth/send-otp', '/api/auth/verify-otp', '/api/auth/create-account', '/api/auth/me']
   });
 });
 
@@ -59,14 +70,10 @@ app.use('/api/notifications', notificationRoutes);
 app.use((err, req, res, next) => {
   console.error('Unhandled Global Error:', err);
   
-  // Handle MongoDB Duplicate Key Errors (E11000)
   if (err.code === 11000) {
     const field = Object.keys(err.keyPattern || err.keyValue || {})[0];
-    if (field === 'email') {
-      return res.status(409).json({ success: false, message: 'An account with this email already exists.' });
-    }
-    if (field === 'mobile' || field === 'phone') {
-      return res.status(409).json({ success: false, message: 'An account with this mobile number already exists.' });
+    if (field === 'phoneNumber' || field === 'mobile' || field === 'phone') {
+      return res.status(409).json({ success: false, message: 'An account already exists with this phone number.' });
     }
     return res.status(409).json({ success: false, message: `An account with this ${field} already exists.` });
   }
