@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 
 export default function Navbar() {
-  const { user, logoutUser } = useAuth();
+  const { user, logoutUser, switchRole } = useAuth();
   const { theme, toggleTheme, isDark } = useTheme();
 
   const [notifications, setNotifications] = useState([]);
@@ -67,6 +67,7 @@ export default function Navbar() {
   };
 
   const roleColors = {
+    admin: { bg: 'rgba(99, 102, 241, 0.15)', text: '#6366F1', label: '🛡️ Admin Officer' },
     farmer: { bg: 'var(--accent-emerald-light)', text: 'var(--accent-emerald)', label: '🌾 Dairy Farmer' },
     consumer: { bg: 'var(--accent-blue-light)', text: 'var(--accent-blue)', label: '🥛 Consumer' },
     agent: { bg: 'var(--accent-amber-light)', text: 'var(--accent-amber)', label: '🚚 Delivery Agent' }
@@ -338,6 +339,75 @@ export default function Navbar() {
                     display: 'inline-block'
                   }}>
                     {user.farmName || user.address || user.assignedArea || 'HealthyMilk Member'}
+                  </div>
+                </div>
+
+                {/* Quick Role Switcher for seamless testing/review */}
+                <div style={{ padding: '0.6rem 0.5rem', borderBottom: '1px solid var(--border-color)' }}>
+                  <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                    Switch View:
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                    <button
+                      onClick={() => { switchRole('farmer'); setShowProfileMenu(false); }}
+                      style={{
+                        padding: '4px 6px',
+                        fontSize: '0.72rem',
+                        borderRadius: '6px',
+                        background: user.role === 'farmer' ? 'var(--accent-emerald-light)' : 'var(--bg-glass)',
+                        color: user.role === 'farmer' ? 'var(--accent-emerald)' : 'var(--text-main)',
+                        fontWeight: user.role === 'farmer' ? 700 : 500,
+                        border: '1px solid var(--border-color)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🌾 Farmer
+                    </button>
+                    <button
+                      onClick={() => { switchRole('agent'); setShowProfileMenu(false); }}
+                      style={{
+                        padding: '4px 6px',
+                        fontSize: '0.72rem',
+                        borderRadius: '6px',
+                        background: (user.role === 'agent' || user.role === 'delivery') ? 'var(--accent-amber-light)' : 'var(--bg-glass)',
+                        color: (user.role === 'agent' || user.role === 'delivery') ? 'var(--accent-amber)' : 'var(--text-main)',
+                        fontWeight: (user.role === 'agent' || user.role === 'delivery') ? 700 : 500,
+                        border: '1px solid var(--border-color)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🚚 Agent
+                    </button>
+                    <button
+                      onClick={() => { switchRole('consumer'); setShowProfileMenu(false); }}
+                      style={{
+                        padding: '4px 6px',
+                        fontSize: '0.72rem',
+                        borderRadius: '6px',
+                        background: user.role === 'consumer' ? 'var(--accent-blue-light)' : 'var(--bg-glass)',
+                        color: user.role === 'consumer' ? 'var(--accent-blue)' : 'var(--text-main)',
+                        fontWeight: user.role === 'consumer' ? 700 : 500,
+                        border: '1px solid var(--border-color)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🥛 Consumer
+                    </button>
+                    <button
+                      onClick={() => { switchRole('admin'); setShowProfileMenu(false); }}
+                      style={{
+                        padding: '4px 6px',
+                        fontSize: '0.72rem',
+                        borderRadius: '6px',
+                        background: user.role === 'admin' ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-glass)',
+                        color: user.role === 'admin' ? '#6366F1' : 'var(--text-main)',
+                        fontWeight: user.role === 'admin' ? 700 : 500,
+                        border: '1px solid var(--border-color)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🛡️ Admin
+                    </button>
                   </div>
                 </div>
 

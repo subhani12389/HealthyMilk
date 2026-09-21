@@ -9,6 +9,8 @@ const farmerRoutes = require('./routes/farmer');
 const consumerRoutes = require('./routes/consumer');
 const deliveryRoutes = require('./routes/delivery');
 const notificationRoutes = require('./routes/notifications');
+const batchRoutes = require('./routes/batch');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -39,7 +41,8 @@ app.use(cors({
 }));
 
 app.options('*', cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Health Check & Root Endpoints
 app.get('/api/health', (req, res) => {
@@ -55,7 +58,15 @@ app.get('/', (req, res) => {
   res.json({
     status: 'online',
     app: 'HealthyMilk Production REST API Server',
-    endpoints: ['/api/health', '/api/auth/send-otp', '/api/auth/verify-otp', '/api/auth/create-account', '/api/auth/me']
+    endpoints: [
+      '/api/health', 
+      '/api/auth/send-otp', 
+      '/api/auth/verify-otp', 
+      '/api/auth/create-account', 
+      '/api/auth/me',
+      '/api/batches',
+      '/api/admin/dashboard'
+    ]
   });
 });
 
@@ -65,6 +76,8 @@ app.use('/api/farmer', farmerRoutes);
 app.use('/api/consumer', consumerRoutes);
 app.use('/api/delivery', deliveryRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/batches', batchRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Global Error Handler
 app.use((err, req, res, next) => {
@@ -74,6 +87,9 @@ app.use((err, req, res, next) => {
     const field = Object.keys(err.keyPattern || err.keyValue || {})[0];
     if (field === 'phoneNumber' || field === 'mobile' || field === 'phone') {
       return res.status(409).json({ success: false, message: 'An account already exists with this phone number.' });
+    }
+    if (field === 'batchId') {
+      return res.status(409).json({ success: false, message: 'A milk batch with this Batch ID already exists.' });
     }
     return res.status(409).json({ success: false, message: `An account with this ${field} already exists.` });
   }

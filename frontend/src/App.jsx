@@ -6,6 +6,7 @@ import AuthPage from './pages/AuthPage';
 import FarmerDashboard from './pages/FarmerDashboard';
 import ConsumerDashboard from './pages/ConsumerDashboard';
 import DeliveryDashboard from './pages/DeliveryDashboard';
+import AdminDashboard from './pages/AdminDashboard';
 
 // Error Boundary Component to prevent white screens
 class ErrorBoundary extends Component {
@@ -72,10 +73,11 @@ export default function App() {
         {/* Content Viewport */}
         <main style={{ flex: 1, padding: '1.75rem', overflowY: 'auto' }}>
           <ErrorBoundary>
+            {role === 'admin' && <AdminDashboard />}
             {(role === 'farmer' || role.includes('farm')) && <FarmerDashboard />}
             {(role === 'consumer' || role.includes('sub')) && <ConsumerDashboard />}
             {(role === 'agent' || role === 'delivery' || role.includes('agent')) && <DeliveryDashboard />}
-            {!['farmer', 'consumer', 'agent', 'delivery'].some(r => role.includes(r)) && <FarmerDashboard />}
+            {!['admin', 'farmer', 'consumer', 'agent', 'delivery'].some(r => role.includes(r)) && <FarmerDashboard />}
           </ErrorBoundary>
         </main>
       </div>

@@ -35,7 +35,20 @@ export default function Sidebar() {
     { id: 'settings', label: 'Settings & Route', icon: Settings }
   ];
 
-  const navItems = user.role === 'farmer' ? farmerItems : user.role === 'consumer' ? consumerItems : agentItems;
+  const adminItems = [
+    { id: 'batches', label: 'Milk Batches & Traceability', icon: Milk, badge: 'Live' },
+    { id: 'rejections', label: 'Quality Rejection Queue', icon: ShieldCheck, badge: 'Review' },
+    { id: 'quality', label: 'Quality Standards & Audits', icon: Clock },
+    { id: 'settings', label: 'Platform Controls', icon: Settings }
+  ];
+
+  const navItems = user.role === 'admin' 
+    ? adminItems 
+    : user.role === 'farmer' 
+      ? farmerItems 
+      : user.role === 'consumer' 
+        ? consumerItems 
+        : agentItems;
 
   return (
     <aside style={{
@@ -77,7 +90,7 @@ export default function Sidebar() {
           padding: '0 0.5rem 0.5rem',
           letterSpacing: '0.05em'
         }}>
-          {user.role === 'farmer' ? 'Farmer Dashboard' : user.role === 'consumer' ? 'Consumer Portal' : 'Delivery Agent Portal'}
+          {user.role === 'admin' ? 'Admin Operations Portal' : user.role === 'farmer' ? 'Farmer Dashboard' : user.role === 'consumer' ? 'Consumer Portal' : 'Delivery Agent Portal'}
         </div>
 
         {/* Navigation Items */}

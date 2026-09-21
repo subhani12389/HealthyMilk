@@ -3,15 +3,16 @@ import { useAuth } from '../context/AuthContext';
 import { apiFetch } from '../utils/api';
 import { renderQRCodeSVG, generateBatchQRData } from '../utils/qrCode';
 import { 
-  Milk, Wallet, Clock, Settings, CheckCircle2, 
+  Milk, Wallet, Clock, Settings, CheckCircle2, AlertTriangle, 
   Truck, ShieldCheck, ArrowUpRight, Search, Download, 
-  RefreshCw, Send, QrCode 
+  RefreshCw, Send, QrCode, Award, Eye, Thermometer 
 } from 'lucide-react';
 
 export default function FarmerDashboard() {
   const { user, activeTab, updateUserBalance } = useAuth();
 
   const [dashboardData, setDashboardData] = useState(null);
+  const [batchesList, setBatchesList] = useState([]);
   const [historyLogs, setHistoryLogs] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -21,6 +22,7 @@ export default function FarmerDashboard() {
   const [notes, setNotes] = useState('Fresh morning milk batch ready');
   const [submittingLog, setSubmittingLog] = useState(false);
   const [logSuccessMsg, setLogSuccessMsg] = useState('');
+  const [generatedBatchId, setGeneratedBatchId] = useState('');
 
   // Payout Modal State
   const [showPayoutModal, setShowPayoutModal] = useState(false);
@@ -29,6 +31,9 @@ export default function FarmerDashboard() {
 
   // QR Modal State
   const [selectedQRBatch, setSelectedQRBatch] = useState(null);
+
+  // Selected Batch for Details
+  const [selectedBatchDetails, setSelectedBatchDetails] = useState(null);
 
   // Settings State
   const [farmName, setFarmName] = useState('');
@@ -48,6 +53,7 @@ export default function FarmerDashboard() {
       const data = await apiFetch(`/api/farmer/dashboard?farmerId=${user.id}`);
       if (data && data.success) {
         setDashboardData(data);
+        setBatchesList(data.batches || []);
         if (data.farmer) {
           setFarmName(data.farmer.farmName || '');
           setLocation(data.farmer.location || '');
@@ -65,6 +71,9 @@ export default function FarmerDashboard() {
       if (histData && histData.success) {
         setHistoryLogs(Array.isArray(histData.logs) ? histData.logs : []);
         setTransactions(Array.isArray(histData.transactions) ? histData.transactions : []);
+        if (histData.batches && histData.batches.length > 0) {
+          setBatchesList(histData.batches);
+        }
       }
     } catch (err) {
       console.error("Farmer fetch error:", err);
@@ -82,6 +91,7 @@ export default function FarmerDashboard() {
     e.preventDefault();
     setSubmittingLog(true);
     setLogSuccessMsg('');
+    setGeneratedBatchId('');
     try {
       const data = await apiFetch('/api/farmer/request-pickup', {
         method: 'POST',
@@ -93,6 +103,7 @@ export default function FarmerDashboard() {
       });
       if (data && data.success) {
         setLogSuccessMsg(data.message);
+        setGeneratedBatchId(data.batchId || data.batch?.batchId || '');
         fetchFarmerData();
       }
     } catch (err) {
@@ -134,14 +145,25 @@ export default function FarmerDashboard() {
 
   // Export CSV Function
   const exportCSV = () => {
-    const logsList = Array.isArray(historyLogs) ? historyLogs : [];
-    const headers = ["Date", "Volume (L)", "Fat %", "SNF %", "Rate/L", "Total Price (INR)", "Status"];
-    const rows = logsList.map(l => [l.dateStr, l.liters, l.fatPercentage, l.snfPercentage, l.ratePerLiter, l.totalPrice, l.status]);
+    const list = batchesList.length > 0 ? batchesList : historyLogs;
+    const headers = ["Batch ID", "Date", "Volume (L)", "Fat %", "SNF %", "Lactometer", "Temp (C)", "Rate/L", "Total (INR)", "Status"];
+    const rows = list.map(b => [
+      b.batchId || b.id,
+      new Date(b.collectionDate || b.timestamp).toLocaleDateString(),
+      b.liters,
+      b.qualityTest?.fatPercentage || b.fatPercentage || '-',
+      b.qualityTest?.snfPercentage || b.snfPercentage || '-',
+      b.qualityTest?.lactometerReading || b.lactometerReading || '-',
+      b.qualityTest?.temperature || 4.0,
+      b.qualityTest?.ratePerLiter || b.ratePerLiter || '-',
+      b.qualityTest?.totalPrice || b.totalPrice || '-',
+      b.status
+    ]);
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `HealthyMilk_Farmer_Supply_Report_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute("download", `HealthyMilk_Farmer_Batches_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -176,14 +198,16 @@ export default function FarmerDashboard() {
   const stats = dashboardData?.stats;
   const currentBalance = user?.balance !== undefined ? user.balance : (farmerProfile?.balance || 0);
 
-  const logsList = Array.isArray(historyLogs) ? historyLogs : [];
+  const rejectedBatches = (batchesList || []).filter(b => b.status === 'Rejected');
   const txList = Array.isArray(transactions) ? transactions : [];
 
-  const filteredLogs = logsList.filter(log => 
-    log?.dateStr?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    log?.status?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    String(log?.liters || '').includes(searchTerm)
-  );
+  const filteredBatches = (batchesList.length > 0 ? batchesList : historyLogs).filter(batch => {
+    const q = searchTerm.toLowerCase();
+    const batchIdStr = String(batch.batchId || batch.id || '').toLowerCase();
+    const statusStr = String(batch.status || '').toLowerCase();
+    const notesStr = String(batch.notes || '').toLowerCase();
+    return batchIdStr.includes(q) || statusStr.includes(q) || notesStr.includes(q);
+  });
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem', maxWidth: '1200px', margin: '0 auto' }}>
@@ -196,7 +220,9 @@ export default function FarmerDashboard() {
         padding: '1.5rem',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between'
+        justifyContent: 'space-between',
+        flexWrap: 'wrap',
+        gap: '1rem'
       }}>
         <div>
           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
@@ -216,6 +242,50 @@ export default function FarmerDashboard() {
           </div>
         </div>
       </div>
+
+      {/* REJECTED BATCHES ALERT BANNER */}
+      {rejectedBatches.length > 0 && (
+        <div style={{
+          background: 'var(--accent-rose-light)',
+          border: '1px solid var(--accent-rose)',
+          borderRadius: '16px',
+          padding: '1.25rem',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '0.75rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <AlertTriangle size={22} color="var(--accent-rose)" />
+            <h4 style={{ fontSize: '1rem', fontWeight: 800, color: 'var(--accent-rose)', margin: 0 }}>
+              Action Required: {rejectedBatches.length} Milk Batch(es) Rejected During Inspection
+            </h4>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            {rejectedBatches.map(b => (
+              <div key={b.batchId || b.id} style={{ background: 'var(--bg-card)', padding: '0.85rem 1rem', borderRadius: '12px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--accent-rose)', fontFamily: 'monospace' }}>{b.batchId}</span>
+                  <span className={`badge ${b.rejection?.reviewStatus === 'Approved' ? 'badge-success' : 'badge-danger'}`}>
+                    {b.rejection?.reviewStatus || 'Quarantined'}
+                  </span>
+                </div>
+                <div style={{ fontWeight: 700, color: 'var(--text-main)', marginTop: '4px' }}>
+                  Reason: {b.rejection?.reason || 'Failed quality checks'}
+                </div>
+                {b.rejection?.remarks && (
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '2px', fontStyle: 'italic' }}>
+                    Agent Remarks: "{b.rejection.remarks}"
+                  </div>
+                )}
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  Payout on hold pending Admin review. Contact dairy coordinator for re-testing.
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* TAB 1: CURRENT MILK STATUS & REQUEST PICKUP */}
       {(!activeTab || activeTab === 'status') && (
@@ -237,23 +307,27 @@ export default function FarmerDashboard() {
               fontSize: '0.82rem',
               lineHeight: '1.4'
             }}>
-              💡 <strong>Workflow Note:</strong> Submit your available milk volume. Delivery Agent John Doe will visit your farm, inspect the <strong>Fat %</strong> and <strong>SNF %</strong>, and the system will automatically credit the calculated funds to your Account Balance!
+              💡 <strong>Batch Traceability:</strong> Submitting creates a unique <strong>Milk Batch ID (HM-YYYYMMDD-XXXX)</strong>. The delivery agent will test Fat %, SNF %, Lactometer, and Temperature on-site to credit funds.
             </div>
 
             {logSuccessMsg && (
               <div style={{
                 background: 'var(--accent-emerald-light)',
                 color: 'var(--accent-emerald)',
-                padding: '0.75rem',
-                borderRadius: '10px',
+                padding: '0.85rem',
+                borderRadius: '12px',
                 marginBottom: '1rem',
                 fontSize: '0.85rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem'
+                fontWeight: 600
               }}>
-                <CheckCircle2 size={18} /> {logSuccessMsg}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <CheckCircle2 size={18} /> {logSuccessMsg}
+                </div>
+                {generatedBatchId && (
+                  <div style={{ marginTop: '6px', fontSize: '0.9rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
+                    Assigned Batch ID: {generatedBatchId}
+                  </div>
+                )}
               </div>
             )}
 
@@ -285,7 +359,7 @@ export default function FarmerDashboard() {
                 <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Pickup Notes for Delivery Agent</label>
                 <input
                   type="text"
-                  placeholder="e.g. Fresh morning milk batch in 2 chilled cans"
+                  placeholder="e.g. Morning fresh A2 batch in chilled container"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   style={{
@@ -307,7 +381,7 @@ export default function FarmerDashboard() {
                 className="btn-primary"
                 style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}
               >
-                {submittingLog ? 'Sending Request...' : 'Send Pickup Request to Agent'}
+                {submittingLog ? 'Registering Batch...' : 'Generate Batch & Request Pickup'}
               </button>
             </form>
           </div>
@@ -317,30 +391,64 @@ export default function FarmerDashboard() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Milk size={22} color="var(--accent-emerald)" />
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Today's Collection & Quality Status</h3>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Today's Batch & Quality</h3>
               </div>
-              <span className="badge badge-info">{currentMilk ? currentMilk.dateStr : 'Today'}</span>
+              <span className="badge badge-info">{currentMilk?.batchId || (currentMilk ? currentMilk.dateStr : 'Today')}</span>
             </div>
 
             {currentMilk ? (
               <div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem', marginBottom: '1.25rem' }}>
+                {/* Batch ID Banner */}
+                <div style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '0.85rem 1rem', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Milk Batch ID</div>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
+                      {currentMilk.batchId || currentMilk.id}
+                    </div>
+                  </div>
+                  <span className={`badge ${currentMilk.status === 'Rejected' ? 'badge-danger' : currentMilk.status === 'Accepted' ? 'badge-success' : 'badge-warning'}`}>
+                    {currentMilk.status}
+                  </span>
+                </div>
+
+                {/* Quality Metrics Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.65rem', marginBottom: '1.25rem' }}>
                   <div style={{ background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: '12px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Requested Volume</div>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Volume</div>
                     <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>{currentMilk.liters} L</div>
                   </div>
+
                   <div style={{ background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: '12px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Tested Fat / SNF</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: currentMilk.fatPercentage > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
-                      {currentMilk.fatPercentage > 0 ? `${currentMilk.fatPercentage}% / ${currentMilk.snfPercentage}%` : 'Pending Inspection'}
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Fat / SNF %</div>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: currentMilk.fatPercentage > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                      {currentMilk.fatPercentage > 0 ? `${currentMilk.fatPercentage}% / ${currentMilk.snfPercentage}%` : 'Pending'}
                     </div>
                   </div>
+
                   <div style={{ background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: '12px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Earned Payout</div>
-                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
-                      {currentMilk.totalPrice > 0 ? `₹${currentMilk.totalPrice}` : 'Awaiting Test'}
+                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Temperature</div>
+                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--accent-blue)' }}>
+                      {currentMilk.temperature || 4.0}°C
                     </div>
                   </div>
+                </div>
+
+                {/* Earned Payout Box */}
+                <div style={{ background: 'var(--bg-primary)', padding: '0.85rem 1rem', borderRadius: '12px', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Calculated Rate & Payout</div>
+                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
+                      {currentMilk.totalPrice > 0 ? `₹${currentMilk.totalPrice} (@ ₹${currentMilk.ratePerLiter}/L)` : 'Pending Inspection'}
+                    </div>
+                  </div>
+                  {currentMilk.qualityScore > 0 && (
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Quality Score</div>
+                      <div style={{ fontSize: '1rem', fontWeight: 800, color: currentMilk.qualityScore >= 80 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
+                        {currentMilk.qualityScore}/100
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <button
@@ -350,54 +458,10 @@ export default function FarmerDashboard() {
                 >
                   <QrCode size={18} color="var(--accent-emerald)" /> View Batch Traceability QR Code & Certificate
                 </button>
-
-                <div style={{ padding: '0.5rem 0' }}>
-                  <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', marginBottom: '1rem', textTransform: 'uppercase' }}>
-                    LIVE DISPATCH TIMELINE
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-                      <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: 'var(--accent-emerald)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <CheckCircle2 size={16} />
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Pickup Requested by Farmer</div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Batch #{currentMilk.id} ({currentMilk.liters} Liters)</div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-                      <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: currentMilk.fatPercentage > 0 ? 'var(--accent-emerald)' : 'var(--accent-amber)', color: '#FFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Truck size={16} />
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Agent On-Site Inspection</div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                          {currentMilk.fatPercentage > 0 
-                            ? `Tested by Agent ${currentMilk.agentName}: Fat ${currentMilk.fatPercentage}%, SNF ${currentMilk.snfPercentage}% @ ₹${currentMilk.ratePerLiter}/L`
-                            : 'Delivery Agent John Doe assigned. Arriving for quality testing.'}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-start' }}>
-                      <div style={{ width: '28px', height: '28px', borderRadius: '50%', background: currentMilk.totalPrice > 0 ? 'var(--accent-emerald)' : 'var(--bg-primary)', color: currentMilk.totalPrice > 0 ? '#FFF' : 'var(--text-muted)', border: '2px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <ShieldCheck size={16} />
-                      </div>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Money Credited to Farmer Balance</div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                          {currentMilk.totalPrice > 0 ? `₹${currentMilk.totalPrice} successfully credited to your account!` : 'Pending quality calculation by Delivery Agent.'}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
               </div>
             ) : (
               <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                No active pickup requests. Submit a pickup request on the left for today's milk batch.
+                No active pickup requests. Submit a pickup request on the left to generate your batch ID.
               </div>
             )}
           </div>
@@ -427,7 +491,8 @@ export default function FarmerDashboard() {
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: '0.35rem',
-                  marginTop: '0.5rem'
+                  marginTop: '0.5rem',
+                  cursor: 'pointer'
                 }}
               >
                 Withdraw to Bank <ArrowUpRight size={16} />
@@ -492,11 +557,11 @@ export default function FarmerDashboard() {
         </div>
       )}
 
-      {/* TAB 3: SUPPLY HISTORY WITH CSV EXPORT */}
+      {/* TAB 3: BATCH SUPPLY HISTORY WITH TRACEABILITY & CSV EXPORT */}
       {activeTab === 'history' && (
         <div className="card">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Milk Supply History</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Milk Batch Traceability & Supply History</h3>
             
             <div style={{ display: 'flex', gap: '0.75rem' }}>
               <button onClick={exportCSV} className="btn-secondary" style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem' }}>
@@ -507,7 +572,7 @@ export default function FarmerDashboard() {
                 <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
                 <input
                   type="text"
-                  placeholder="Search date or status..."
+                  placeholder="Search Batch ID, Status..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   style={{
@@ -527,40 +592,54 @@ export default function FarmerDashboard() {
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
               <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '0.75rem' }}>Date</th>
+                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                  <th style={{ padding: '0.75rem' }}>Batch ID</th>
+                  <th style={{ padding: '0.75rem' }}>Collection Date</th>
                   <th style={{ padding: '0.75rem' }}>Volume</th>
-                  <th style={{ padding: '0.75rem' }}>Tested Fat %</th>
-                  <th style={{ padding: '0.75rem' }}>Tested SNF %</th>
-                  <th style={{ padding: '0.75rem' }}>Calculated Rate/L</th>
-                  <th style={{ padding: '0.75rem' }}>Money Credited</th>
+                  <th style={{ padding: '0.75rem' }}>Fat % / SNF %</th>
+                  <th style={{ padding: '0.75rem' }}>Lactometer & Temp</th>
+                  <th style={{ padding: '0.75rem' }}>Payout</th>
                   <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem' }}>Action</th>
+                  <th style={{ padding: '0.75rem' }}>Certificate</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredLogs.map(log => (
-                  <tr key={log.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <td style={{ padding: '0.75rem', fontWeight: 700 }}>{log.dateStr}</td>
-                    <td style={{ padding: '0.75rem', fontWeight: 800 }}>{log.liters} L</td>
-                    <td style={{ padding: '0.75rem' }}>{log.fatPercentage > 0 ? `${log.fatPercentage}%` : '-'}</td>
-                    <td style={{ padding: '0.75rem' }}>{log.snfPercentage > 0 ? `${log.snfPercentage}%` : '-'}</td>
-                    <td style={{ padding: '0.75rem' }}>{log.ratePerLiter > 0 ? `₹${log.ratePerLiter}` : '-'}</td>
-                    <td style={{ padding: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
-                      {log.totalPrice > 0 ? `₹${log.totalPrice}` : 'Awaiting Test'}
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <span className={`badge ${log.status?.includes('Collected') || log.status === 'Delivered' ? 'badge-success' : 'badge-warning'}`}>
-                        {log.status}
-                      </span>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <button onClick={() => setSelectedQRBatch(log)} style={{ background: 'none', color: 'var(--accent-emerald)', fontWeight: 700, fontSize: '0.78rem' }}>
-                        QR Certificate
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {filteredBatches.map(b => {
+                  const isRej = b.status === 'Rejected';
+                  const fat = b.qualityTest?.fatPercentage || b.fatPercentage || 0;
+                  const snf = b.qualityTest?.snfPercentage || b.snfPercentage || 0;
+                  const lacto = b.qualityTest?.lactometerReading || b.lactometerReading || 0;
+                  const temp = b.qualityTest?.temperature || 4.0;
+                  const payout = b.qualityTest?.totalPrice || b.totalPrice || 0;
+                  return (
+                    <tr key={b.batchId || b.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <td style={{ padding: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
+                        {b.batchId || b.id}
+                      </td>
+                      <td style={{ padding: '0.75rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                        {new Date(b.collectionDate || b.timestamp).toLocaleDateString()}
+                      </td>
+                      <td style={{ padding: '0.75rem', fontWeight: 800 }}>{b.liters} L</td>
+                      <td style={{ padding: '0.75rem' }}>{fat > 0 ? `${fat}% / ${snf}%` : '-'}</td>
+                      <td style={{ padding: '0.75rem', fontSize: '0.8rem' }}>
+                        {lacto > 0 ? `${lacto} • ${temp}°C` : '-'}
+                      </td>
+                      <td style={{ padding: '0.75rem', fontWeight: 800, color: isRej ? 'var(--accent-rose)' : payout > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                        {isRej ? 'Withheld (Rejected)' : payout > 0 ? `₹${payout}` : 'Pending Test'}
+                      </td>
+                      <td style={{ padding: '0.75rem' }}>
+                        <span className={`badge ${isRej ? 'badge-danger' : b.status === 'Accepted' || b.status === 'Delivered' ? 'badge-success' : 'badge-warning'}`}>
+                          {b.status}
+                        </span>
+                      </td>
+                      <td style={{ padding: '0.75rem' }}>
+                        <button onClick={() => setSelectedQRBatch(b)} style={{ background: 'none', border: 'none', color: 'var(--accent-emerald)', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
+                          QR Certificate
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -621,7 +700,7 @@ export default function FarmerDashboard() {
           background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem'
         }}>
-          <div className="card" style={{ width: '420px', maxWidth: '95%', textAlign: 'center' }}>
+          <div className="card" style={{ width: '440px', maxWidth: '95%', textAlign: 'center' }}>
             <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
               HEALTHYMILK DIGITAL CERTIFICATE
             </div>
@@ -635,11 +714,12 @@ export default function FarmerDashboard() {
             />
 
             <div style={{ background: 'var(--bg-primary)', borderRadius: '12px', padding: '0.85rem', textAlign: 'left', fontSize: '0.82rem', marginBottom: '1.25rem' }}>
-              <div>Batch ID: <strong>{selectedQRBatch.id}</strong></div>
-              <div>Farmer: <strong>{selectedQRBatch.farmerName}</strong></div>
+              <div>Batch ID: <strong style={{ fontFamily: 'monospace', color: 'var(--accent-emerald)' }}>{selectedQRBatch.batchId || selectedQRBatch.id}</strong></div>
+              <div>Farmer: <strong>{selectedQRBatch.farmerName || farmerProfile?.farmName}</strong></div>
               <div>Volume: <strong>{selectedQRBatch.liters} Liters</strong></div>
-              <div>Tested Fat / SNF: <strong>{selectedQRBatch.fatPercentage > 0 ? `${selectedQRBatch.fatPercentage}% / ${selectedQRBatch.snfPercentage}%` : 'Pending Inspection'}</strong></div>
-              <div>Quality Status: <strong style={{ color: 'var(--accent-emerald)' }}>{selectedQRBatch.status}</strong></div>
+              <div>Tested Fat / SNF: <strong>{selectedQRBatch.qualityTest ? `${selectedQRBatch.qualityTest.fatPercentage}% / ${selectedQRBatch.qualityTest.snfPercentage}%` : (selectedQRBatch.fatPercentage > 0 ? `${selectedQRBatch.fatPercentage}% / ${selectedQRBatch.snfPercentage}%` : 'Pending Inspection')}</strong></div>
+              <div>Temperature: <strong>{selectedQRBatch.qualityTest?.temperature || 4.0}°C</strong></div>
+              <div>Quality Status: <strong style={{ color: selectedQRBatch.status === 'Rejected' ? 'var(--accent-rose)' : 'var(--accent-emerald)' }}>{selectedQRBatch.status}</strong></div>
             </div>
 
             <button onClick={() => setSelectedQRBatch(null)} className="btn-primary" style={{ width: '100%', justifyContent: 'center' }}>

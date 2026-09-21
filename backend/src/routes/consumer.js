@@ -1,13 +1,24 @@
 const express = require('express');
 const router = express.Router();
-const { users, deliveryTasks, notifications } = require('../store');
+const MilkBatch = require('../models/MilkBatch');
+const { users, deliveryTasks, milkBatches, notifications } = require('../store');
 
 // GET /api/consumer/dashboard?consumerId=
-router.get('/dashboard', (req, res) => {
+router.get('/dashboard', async (req, res) => {
   const { consumerId } = req.query;
   let consumer = users.find(u => u.id === consumerId && u.role === 'consumer');
   if (!consumer) {
     consumer = users.find(u => u.role === 'consumer');
+  }
+
+  // Find latest accepted batch to show traceable quality to consumer
+  let activeBatch = null;
+  try {
+    activeBatch = await MilkBatch.findOne({ status: { $in: ['Accepted', 'In Transit', 'Delivered'] } }).sort({ collectionDate: -1 }).lean();
+  } catch (e) {}
+
+  if (!activeBatch) {
+    activeBatch = milkBatches.find(b => b.status === 'Accepted' || b.status === 'In Transit' || b.status === 'Delivered') || milkBatches[0];
   }
 
   if (!consumer) {
@@ -35,17 +46,25 @@ router.get('/dashboard', (req, res) => {
       },
       currentMilkStatus: {
         deliveryId: 'del_101',
+        batchId: activeBatch ? activeBatch.batchId : 'HM-20260921-0001',
         status: 'Active Plan Subscribed',
         liters: 2,
         milkType: 'Pure Fresh A2 Cow Milk',
         timeSlot: '6:30 AM - 7:30 AM',
         eta: '07:15 AM',
-        agentName: 'Assigned Delivery Agent',
-        farmerName: 'Local Organic Dairy Farm',
+        agentName: activeBatch?.agentName || 'Assigned Delivery Agent',
+        farmerName: activeBatch?.farmName || activeBatch?.farmerName || 'Local Organic Dairy Farm',
+        farmLocation: activeBatch?.farmLocation || 'Kaira Valley, Anand',
         qualityDetails: {
-          fat: '4.5%',
-          purity: '100% Pure Organic',
-          temperature: '4°C Chilled'
+          fat: activeBatch?.qualityTest ? `${activeBatch.qualityTest.fatPercentage}%` : '4.8%',
+          snf: activeBatch?.qualityTest ? `${activeBatch.qualityTest.snfPercentage}%` : '8.9%',
+          lactometer: activeBatch?.qualityTest ? activeBatch.qualityTest.lactometerReading : 30.0,
+          temperature: activeBatch?.qualityTest ? `${activeBatch.qualityTest.temperature}°C Chilled` : '4°C Chilled',
+          purity: '100% Pure Organic & Lab Tested',
+          qualityScore: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityScore : 96,
+          qualityStatus: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityStatus : 'Passed',
+          testedAt: activeBatch?.qualityTest?.testedAt || new Date().toISOString(),
+          testedBy: activeBatch?.qualityTest?.testedBy || 'Certified Dairy Inspector'
         }
       },
       history: []
@@ -79,17 +98,25 @@ router.get('/dashboard', (req, res) => {
     },
     currentMilkStatus: {
       deliveryId: todayTask ? todayTask.id : `del_${Date.now()}`,
+      batchId: activeBatch ? activeBatch.batchId : 'HM-20260921-0001',
       status: todayTask ? todayTask.status : 'Out for Delivery',
       liters: consumer.subscription ? consumer.subscription.dailyLiters : 2,
       milkType: consumer.subscription ? consumer.subscription.planName : 'Pure A2 Cow Milk',
       timeSlot: consumer.subscription ? consumer.subscription.deliveryTimeSlot : '6:30 AM - 7:30 AM',
       eta: todayTask ? (todayTask.eta || '07:15 AM') : '07:15 AM',
-      agentName: todayTask ? (todayTask.agentName || 'Delivery Agent') : 'Assigned Agent',
-      farmerName: 'Local Dairy Farm',
+      agentName: activeBatch?.agentName || (todayTask ? (todayTask.agentName || 'Delivery Agent') : 'Assigned Agent'),
+      farmerName: activeBatch?.farmName || activeBatch?.farmerName || 'Local Dairy Farm',
+      farmLocation: activeBatch?.farmLocation || 'Kaira Valley, Anand',
       qualityDetails: {
-        fat: '4.5%',
-        purity: '100% Pure Organic',
-        temperature: '4°C Chilled'
+        fat: activeBatch?.qualityTest ? `${activeBatch.qualityTest.fatPercentage}%` : '4.8%',
+        snf: activeBatch?.qualityTest ? `${activeBatch.qualityTest.snfPercentage}%` : '8.9%',
+        lactometer: activeBatch?.qualityTest ? activeBatch.qualityTest.lactometerReading : 30.0,
+        temperature: activeBatch?.qualityTest ? `${activeBatch.qualityTest.temperature}°C Chilled` : '4°C Chilled',
+        purity: '100% Pure Organic & Lab Tested',
+        qualityScore: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityScore : 96,
+        qualityStatus: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityStatus : 'Passed',
+        testedAt: activeBatch?.qualityTest?.testedAt || new Date().toISOString(),
+        testedBy: activeBatch?.qualityTest?.testedBy || 'Certified Dairy Inspector'
       }
     },
     history

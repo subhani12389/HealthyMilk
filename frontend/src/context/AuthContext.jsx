@@ -60,12 +60,22 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const switchRole = (newRole) => {
+    if (user) {
+      const updatedUser = { ...user, role: newRole };
+      setUser(updatedUser);
+      localStorage.setItem('healthymilk_user', JSON.stringify(updatedUser));
+      setActiveTab('status');
+    }
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
       token,
       loginUser,
       logoutUser,
+      switchRole,
       updateUserBalance,
       refreshUserProfile,
       activeTab,
