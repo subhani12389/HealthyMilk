@@ -106,10 +106,10 @@ export default function Navbar() {
               background: 'var(--bg-card)',
               border: '1px solid var(--border-color)',
               color: 'var(--text-main)',
-              display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              boxShadow: 'var(--shadow-sm)'
+              boxShadow: 'var(--shadow-sm)',
+              cursor: 'pointer'
             }}
             className="mobile-hamburger-btn"
           >

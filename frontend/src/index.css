@@ -294,30 +294,120 @@ input, select, textarea {
   width: min(95vw, 760px);
 }
 
-/* Mobile Sidebar Drawer & Overlay */
-.mobile-drawer-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(15, 23, 42, 0.6);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  z-index: 998;
-  transition: opacity 0.3s ease;
+/* ========================================================= */
+/* Responsive Collapsible Sidebar & Navigation Drawer        */
+/* ========================================================= */
+
+/* Mobile Hamburger Button in Navbar */
+.mobile-hamburger-btn {
+  display: none;
+  cursor: pointer;
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+.mobile-hamburger-btn:active {
+  transform: scale(0.95);
 }
 
-@media (max-width: 1023px) {
-  .sidebar-desktop {
-    display: none !important;
-  }
+/* Sidebar Mobile Header & Close Button */
+.sidebar-mobile-header {
+  display: none;
 }
 
-@media (min-width: 1024px) {
-  .mobile-drawer-backdrop,
-  .sidebar-mobile {
-    display: none !important;
-  }
-  .sidebar-desktop {
+.sidebar-close-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.sidebar-close-btn:hover {
+  background: var(--accent-rose-light);
+  color: var(--accent-rose);
+  border-color: var(--accent-rose);
+}
+
+/* Desktop Sidebar Styling (default >= 769px) */
+.app-sidebar {
+  width: 260px;
+  min-width: 260px;
+  background: var(--bg-card);
+  border-right: 1px solid var(--border-color);
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: calc(100vh - 60px);
+  flex-shrink: 0;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+/* ========================================================= */
+/* Mobile & Tablet Breakpoint: @media (max-width: 768px)     */
+/* ========================================================= */
+@media (max-width: 768px) {
+  /* Show hamburger button at top-left */
+  .mobile-hamburger-btn {
     display: flex !important;
+  }
+
+  /* Show mobile header inside sliding sidebar with ✕ */
+  .sidebar-mobile-header {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  /* Fixed slide-out drawer on the left side */
+  .app-sidebar {
+    position: fixed !important;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(300px, 85vw);
+    height: 100vh;
+    min-height: 100vh;
+    z-index: 1000;
+    box-shadow: var(--shadow-lg);
+    overflow-y: auto;
+    transform: translateX(-100%);
+    border-right: 1px solid var(--border-color);
+  }
+
+  /* When sidebar is opened via ☰ button */
+  .app-sidebar.sidebar-open {
+    transform: translateX(0) !important;
+  }
+
+  /* Smooth backdrop */
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+
+  .sidebar-backdrop.backdrop-open {
+    opacity: 1;
+    pointer-events: auto;
   }
 }
 
