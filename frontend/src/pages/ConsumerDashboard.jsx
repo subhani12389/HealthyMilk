@@ -190,34 +190,34 @@ export default function ConsumerDashboard() {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       
       {/* Top Banner */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(37, 99, 235, 0.12) 0%, rgba(16, 185, 129, 0.08) 100%)',
         border: '1px solid var(--accent-blue)',
         borderRadius: '20px',
-        padding: '1.5rem',
+        padding: 'clamp(1rem, 2.5vw, 1.5rem)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
         gap: '1rem'
       }}>
-        <div>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-blue)', textTransform: 'uppercase' }}>
+        <div style={{ minWidth: '220px', flex: '1 1 240px' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-blue)', textTransform: 'uppercase' }}>
             🥛 Consumer Subscription Active
           </div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+          <h2 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.5rem)', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
             {user?.name || 'Consumer User'}
           </h2>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
             <MapPin size={14} color="var(--accent-blue)" /> {address || '123 Green Avenue, Sector 14'}
           </p>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Daily Quantity</div>
-          <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-blue)' }}>
+        <div style={{ textAlign: 'left', minWidth: '160px' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Daily Quantity</div>
+          <div style={{ fontSize: 'clamp(1.2rem, 3.5vw, 1.4rem)', fontWeight: 800, color: 'var(--accent-blue)', marginTop: '2px' }}>
             {subscription?.dailyLiters || 2} Liters / Day
           </div>
         </div>
@@ -225,7 +225,7 @@ export default function ConsumerDashboard() {
 
       {/* TAB 1: CURRENT MILK STATUS */}
       {activeTab === 'status' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+        <div className="grid-responsive-2">
           
           {/* Left: Today's Delivery Status Card with Batch ID */}
           <div className="card">
@@ -458,7 +458,7 @@ export default function ConsumerDashboard() {
       {activeTab === 'history' && (
         <div className="card">
           <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1.25rem' }}>Delivery History & Digital Invoices</h3>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-responsive">
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
@@ -532,13 +532,9 @@ export default function ConsumerDashboard() {
 
       {/* Purity & Origin Certificate Modal */}
       {showCertificateModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem'
-        }}>
-          <div className="card" style={{ width: '440px', maxWidth: '95%', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-blue)', textTransform: 'uppercase' }}>
+        <div className="modal-backdrop-custom" onClick={() => setShowCertificateModal(false)}>
+          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-blue)', textTransform: 'uppercase' }}>
               HEALTHYMILK PURITY ASSURANCE
             </div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '4px' }}>

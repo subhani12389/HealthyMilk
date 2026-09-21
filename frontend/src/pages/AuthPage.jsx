@@ -251,43 +251,48 @@ export default function AuthPage() {
   return (
     <div style={{
       minHeight: '100vh',
+      width: '100%',
+      maxWidth: '100%',
+      overflowX: 'hidden',
       background: 'radial-gradient(circle at 80% 20%, rgba(16, 185, 129, 0.12), transparent 45%), radial-gradient(circle at 20% 80%, rgba(59, 130, 246, 0.12), transparent 45%)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      padding: '2.5rem 1rem'
+      padding: 'clamp(1rem, 3vw, 2.5rem) clamp(0.75rem, 2vw, 1.25rem)',
+      boxSizing: 'border-box'
     }}>
       <div style={{
         width: '100%',
         maxWidth: '480px',
         background: 'var(--bg-card)',
         border: '1px solid var(--border-color)',
-        borderRadius: '24px',
+        borderRadius: 'clamp(16px, 4vw, 24px)',
         boxShadow: 'var(--shadow-lg)',
-        padding: '2.5rem',
-        backdropFilter: 'blur(20px)'
+        padding: 'clamp(1.25rem, 4vw, 2.5rem)',
+        backdropFilter: 'blur(20px)',
+        boxSizing: 'border-box'
       }}>
         
         {/* Brand Header */}
-        <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
+        <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
           <div style={{
-            width: '60px',
-            height: '60px',
-            borderRadius: '18px',
+            width: '56px',
+            height: '56px',
+            borderRadius: '16px',
             background: 'linear-gradient(135deg, #059669 0%, #10B981 100%)',
             display: 'inline-flex',
             alignItems: 'center',
             justifyContent: 'center',
             color: '#FFFFFF',
-            marginBottom: '0.85rem',
+            marginBottom: '0.75rem',
             boxShadow: '0 8px 20px rgba(16, 185, 129, 0.35)'
           }}>
-            <Milk size={34} />
+            <Milk size={30} />
           </div>
-          <h2 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)' }}>
+          <h2 style={{ fontSize: 'clamp(1.4rem, 4vw, 1.75rem)', fontWeight: 800, color: 'var(--text-main)' }}>
             Healthy<span style={{ color: 'var(--accent-emerald)' }}>Milk</span>
           </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: '4px' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '4px' }}>
             {step === 1 && 'Welcome to HealthyMilk – Enter your phone number'}
             {step === 2 && 'Verify Phone Number'}
             {step === 3 && 'Choose Your Account Type'}
@@ -299,9 +304,9 @@ export default function AuthPage() {
           <div style={{
             background: 'var(--accent-rose-light)',
             color: 'var(--accent-rose)',
-            padding: '0.85rem 1rem',
+            padding: '0.75rem 0.9rem',
             borderRadius: '12px',
-            fontSize: '0.85rem',
+            fontSize: '0.82rem',
             marginBottom: '1.25rem',
             fontWeight: 600,
             lineHeight: '1.4',
@@ -317,9 +322,9 @@ export default function AuthPage() {
           <div style={{
             background: 'var(--accent-emerald-light)',
             color: 'var(--accent-emerald)',
-            padding: '0.85rem 1rem',
+            padding: '0.75rem 0.9rem',
             borderRadius: '12px',
-            fontSize: '0.85rem',
+            fontSize: '0.82rem',
             marginBottom: '1.25rem',
             fontWeight: 600,
             display: 'flex',
@@ -334,31 +339,32 @@ export default function AuthPage() {
         {/* STEP 1: Enter Phone Number Screen */}
         {/* ==================================================== */}
         {step === 1 && (
-          <form onSubmit={handleSendOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <form onSubmit={handleSendOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
             <div>
-              <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
                 Mobile Phone Number
               </label>
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.4rem' }}>
+              <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.4rem' }}>
                 {/* Country Code Badge */}
                 <div style={{
-                  padding: '0.85rem 0.9rem',
+                  padding: '0.75rem clamp(0.5rem, 2vw, 0.85rem)',
                   borderRadius: '12px',
                   border: '1px solid var(--border-color)',
                   background: 'var(--bg-primary)',
                   color: 'var(--text-main)',
                   fontWeight: 800,
-                  fontSize: '0.95rem',
+                  fontSize: '0.92rem',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '0.35rem'
+                  gap: '0.25rem',
+                  flexShrink: 0
                 }}>
                   <span>🇮🇳</span> +91
                 </div>
 
                 {/* 10-Digit Mobile Input */}
                 <div style={{ position: 'relative', flex: 1 }}>
-                  <Phone size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                  <Phone size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
                   <input
                     type="tel"
                     required
@@ -368,19 +374,20 @@ export default function AuthPage() {
                     onChange={handlePhoneChange}
                     style={{
                       width: '100%',
-                      padding: '0.85rem 0.75rem 0.85rem 2.5rem',
+                      padding: '0.75rem 0.5rem 0.75rem 2.2rem',
                       borderRadius: '12px',
                       border: mobileNumber.length === 10 ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
                       background: 'var(--bg-primary)',
                       color: 'var(--text-main)',
-                      fontSize: '1.05rem',
+                      fontSize: 'clamp(0.95rem, 3vw, 1.05rem)',
                       fontWeight: 800,
-                      letterSpacing: '1px'
+                      letterSpacing: '1px',
+                      boxSizing: 'border-box'
                     }}
                   />
                 </div>
               </div>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.4rem' }}>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.4rem' }}>
                 Enter your 10-digit Indian mobile number to receive verification OTP.
               </span>
             </div>
@@ -392,8 +399,8 @@ export default function AuthPage() {
               style={{
                 width: '100%',
                 justifyContent: 'center',
-                padding: '0.9rem',
-                fontSize: '0.95rem',
+                padding: '0.85rem',
+                fontSize: '0.92rem',
                 fontWeight: 700,
                 borderRadius: '12px',
                 opacity: (loading || mobileNumber.length !== 10) ? 0.6 : 1,
@@ -410,31 +417,31 @@ export default function AuthPage() {
         {/* STEP 2: Verify Phone Number (6-Digit OTP Screen) */}
         {/* ==================================================== */}
         {step === 2 && (
-          <form onSubmit={handleVerifyOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <form onSubmit={handleVerifyOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
             <div style={{
               background: 'var(--accent-emerald-light)',
               border: '1px solid var(--accent-emerald)',
               borderRadius: '16px',
-              padding: '1.1rem',
+              padding: '1rem',
               textAlign: 'center'
             }}>
-              <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
                 📱 Mobile OTP Verification Code
               </div>
-              <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
                 {maskedPhone}
               </div>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
                 We've sent a 6-digit verification code to your phone.
               </p>
             </div>
 
             {/* 6 Individual Auto-Focusing OTP Boxes */}
             <div>
-              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', textAlign: 'center' }}>
+              <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', textAlign: 'center' }}>
                 Enter 6-Digit Verification Code
               </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '0.45rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 'clamp(3px, 1.5vw, 8px)' }}>
                 {otpDigits.map((digit, idx) => (
                   <input
                     key={idx}
@@ -447,15 +454,17 @@ export default function AuthPage() {
                     onPaste={handleOtpPaste}
                     style={{
                       width: '100%',
-                      height: '52px',
-                      borderRadius: '12px',
+                      height: 'clamp(44px, 11vw, 54px)',
+                      borderRadius: 'clamp(8px, 2vw, 12px)',
                       border: digit ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
                       background: 'var(--bg-primary)',
                       color: 'var(--text-main)',
-                      fontSize: '1.35rem',
+                      fontSize: 'clamp(1.1rem, 4.5vw, 1.35rem)',
                       fontWeight: 800,
                       textAlign: 'center',
-                      boxShadow: digit ? '0 0 0 3px rgba(16, 185, 129, 0.15)' : 'none'
+                      padding: 0,
+                      boxShadow: digit ? '0 0 0 3px rgba(16, 185, 129, 0.15)' : 'none',
+                      boxSizing: 'border-box'
                     }}
                   />
                 ))}

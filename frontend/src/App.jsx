@@ -61,17 +61,25 @@ export default function App() {
   const role = (user.role || '').toLowerCase();
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', overflowX: 'hidden' }}>
       {/* Top Navbar */}
       <Navbar />
 
       {/* Main Layout Body */}
-      <div style={{ display: 'flex', flex: 1 }}>
+      <div style={{ display: 'flex', flex: 1, width: '100%', maxWidth: '100%', overflowX: 'hidden' }}>
         {/* Sidebar Navigation */}
         <Sidebar />
 
         {/* Content Viewport */}
-        <main style={{ flex: 1, padding: '1.75rem', overflowY: 'auto' }}>
+        <main style={{ 
+          flex: 1, 
+          padding: 'clamp(0.85rem, 2vw, 1.75rem)', 
+          overflowY: 'auto', 
+          overflowX: 'hidden',
+          width: '100%',
+          maxWidth: '100%',
+          boxSizing: 'border-box'
+        }}>
           <ErrorBoundary>
             {role === 'admin' && <AdminDashboard />}
             {(role === 'farmer' || role.includes('farm')) && <FarmerDashboard />}

@@ -69,6 +69,12 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  const toggleMobileSidebar = () => {
+    setMobileSidebarOpen(prev => !prev);
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -80,6 +86,9 @@ export const AuthProvider = ({ children }) => {
       refreshUserProfile,
       activeTab,
       setActiveTab,
+      mobileSidebarOpen,
+      setMobileSidebarOpen,
+      toggleMobileSidebar,
       initializing
     }}>
       {children}

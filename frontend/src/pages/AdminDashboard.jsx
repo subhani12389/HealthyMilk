@@ -110,20 +110,20 @@ export default function AdminDashboard() {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
       
       {/* Top Banner & Refresh */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <h1 style={{ fontSize: 'clamp(1.35rem, 3.5vw, 1.75rem)', fontWeight: 800, color: 'var(--text-main)', margin: 0 }}>
               Admin Operations Hub
             </h1>
             <span className="badge badge-success" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-              <ShieldCheck size={13} /> Full Traceability Active
+              <ShieldCheck size={13} /> Traceability Active
             </span>
           </div>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', marginTop: '4px' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '4px' }}>
             Monitor Milk Batch IDs, audit quality testing parameters, and review quarantined milk batches.
           </p>
         </div>
@@ -132,7 +132,7 @@ export default function AdminDashboard() {
           onClick={fetchAdminData}
           className="btn-secondary"
           disabled={loading}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.65rem 1.1rem' }}
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1rem' }}
         >
           <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
           <span>Refresh Data</span>
@@ -144,14 +144,15 @@ export default function AdminDashboard() {
         <div style={{
           background: 'var(--accent-emerald-light)',
           color: 'var(--accent-emerald)',
-          padding: '0.9rem 1.25rem',
-          borderRadius: '14px',
+          padding: '0.75rem 1rem',
+          borderRadius: '12px',
           fontWeight: 600,
+          fontSize: '0.85rem',
           display: 'flex',
           alignItems: 'center',
-          gap: '0.65rem'
+          gap: '0.5rem'
         }}>
-          <CheckCircle2 size={20} />
+          <CheckCircle2 size={18} />
           <span>{msg}</span>
         </div>
       )}
@@ -160,24 +161,21 @@ export default function AdminDashboard() {
         <div style={{
           background: 'var(--accent-rose-light)',
           color: 'var(--accent-rose)',
-          padding: '0.9rem 1.25rem',
-          borderRadius: '14px',
+          padding: '0.75rem 1rem',
+          borderRadius: '12px',
           fontWeight: 600,
+          fontSize: '0.85rem',
           display: 'flex',
           alignItems: 'center',
-          gap: '0.65rem'
+          gap: '0.5rem'
         }}>
-          <AlertTriangle size={20} />
+          <AlertTriangle size={18} />
           <span>{errorMsg}</span>
         </div>
       )}
 
       {/* KPI Stats Grid */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-        gap: '1rem'
-      }}>
+      <div className="grid-kpi-cards">
         {/* Stat 1: Total Batches */}
         <div className="card" style={{ padding: '1.25rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -185,15 +183,15 @@ export default function AdminDashboard() {
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                 Total Batches
               </span>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+              <div style={{ fontSize: 'clamp(1.4rem, 3.5vw, 1.75rem)', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
                 {stats.totalBatches}
               </div>
             </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'var(--accent-blue-light)', color: 'var(--accent-blue)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Milk size={20} />
+            <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'var(--accent-blue-light)', color: 'var(--accent-blue)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Milk size={19} />
             </div>
           </div>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
             {stats.totalLitersCollected} Liters collected total
           </div>
         </div>
@@ -205,15 +203,15 @@ export default function AdminDashboard() {
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                 Accepted Batches
               </span>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '4px' }}>
+              <div style={{ fontSize: 'clamp(1.4rem, 3.5vw, 1.75rem)', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '4px' }}>
                 {stats.acceptedBatches}
               </div>
             </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <CheckCircle2 size={20} />
+            <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <CheckCircle2 size={19} />
             </div>
           </div>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
             Passed quality inspection
           </div>
         </div>
@@ -225,15 +223,15 @@ export default function AdminDashboard() {
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                 Rejected Batches
               </span>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-rose)', marginTop: '4px' }}>
+              <div style={{ fontSize: 'clamp(1.4rem, 3.5vw, 1.75rem)', fontWeight: 800, color: 'var(--accent-rose)', marginTop: '4px' }}>
                 {stats.rejectedBatches}
               </div>
             </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'var(--accent-rose-light)', color: 'var(--accent-rose)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <AlertTriangle size={20} />
+            <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'var(--accent-rose-light)', color: 'var(--accent-rose)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <AlertTriangle size={19} />
             </div>
           </div>
-          <div style={{ fontSize: '0.78rem', color: stats.rejectedBatches > 0 ? 'var(--accent-rose)' : 'var(--text-muted)', marginTop: '0.65rem', fontWeight: 600 }}>
+          <div style={{ fontSize: '0.75rem', color: stats.rejectedBatches > 0 ? 'var(--accent-rose)' : 'var(--text-muted)', marginTop: '0.5rem', fontWeight: 600 }}>
             {stats.rejectedBatches > 0 ? 'Requires admin review' : 'Zero quality violations'}
           </div>
         </div>
@@ -245,119 +243,123 @@ export default function AdminDashboard() {
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
                 In Cold-Chain
               </span>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--accent-amber)', marginTop: '4px' }}>
+              <div style={{ fontSize: 'clamp(1.4rem, 3.5vw, 1.75rem)', fontWeight: 800, color: 'var(--accent-amber)', marginTop: '4px' }}>
                 {stats.inTransitBatches}
               </div>
             </div>
-            <div style={{ width: '40px', height: '40px', borderRadius: '12px', background: 'var(--accent-amber-light)', color: 'var(--accent-amber)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Truck size={20} />
+            <div style={{ width: '38px', height: '38px', borderRadius: '12px', background: 'var(--accent-amber-light)', color: 'var(--accent-amber)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Truck size={19} />
             </div>
           </div>
-          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.65rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
             Active route delivery
           </div>
         </div>
       </div>
 
       {/* Main Tabs Navigation */}
-      <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
+      <div style={{ display: 'flex', gap: '0.4rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', overflowX: 'auto' }}>
         <button
           onClick={() => setActiveTab('batches')}
           style={{
-            padding: '0.65rem 1.25rem',
+            padding: '0.6rem 1rem',
             borderRadius: '10px',
             border: 'none',
             background: activeTab === 'batches' ? 'var(--accent-emerald-light)' : 'transparent',
             color: activeTab === 'batches' ? 'var(--accent-emerald)' : 'var(--text-muted)',
             fontWeight: 700,
-            fontSize: '0.9rem',
+            fontSize: '0.85rem',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            gap: '0.4rem'
+            gap: '0.35rem',
+            whiteSpace: 'nowrap'
           }}
         >
-          <Milk size={17} /> All Milk Batches ({batches.length})
+          <Milk size={16} /> All Batches ({batches.length})
         </button>
 
         <button
           onClick={() => setActiveTab('rejections')}
           style={{
-            padding: '0.65rem 1.25rem',
+            padding: '0.6rem 1rem',
             borderRadius: '10px',
             border: 'none',
             background: activeTab === 'rejections' ? 'var(--accent-rose-light)' : 'transparent',
             color: activeTab === 'rejections' ? 'var(--accent-rose)' : 'var(--text-muted)',
             fontWeight: 700,
-            fontSize: '0.9rem',
+            fontSize: '0.85rem',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            gap: '0.4rem'
+            gap: '0.35rem',
+            whiteSpace: 'nowrap'
           }}
         >
-          <AlertTriangle size={17} /> Rejected Batches Queue ({rejectedQueue.length})
+          <AlertTriangle size={16} /> Rejections Queue ({rejectedQueue.length})
         </button>
 
         <button
           onClick={() => setActiveTab('quality')}
           style={{
-            padding: '0.65rem 1.25rem',
+            padding: '0.6rem 1rem',
             borderRadius: '10px',
             border: 'none',
             background: activeTab === 'quality' ? 'var(--accent-blue-light)' : 'transparent',
             color: activeTab === 'quality' ? 'var(--accent-blue)' : 'var(--text-muted)',
             fontWeight: 700,
-            fontSize: '0.9rem',
+            fontSize: '0.85rem',
             cursor: 'pointer',
             display: 'flex',
             alignItems: 'center',
-            gap: '0.4rem'
+            gap: '0.35rem',
+            whiteSpace: 'nowrap'
           }}
         >
-          <Award size={17} /> Quality Test History
+          <Award size={16} /> Quality History
         </button>
       </div>
 
       {/* TAB 1: ALL MILK BATCHES (SEARCH & TRACEABILITY) */}
       {activeTab === 'batches' && (
-        <div className="card" style={{ padding: '1.5rem' }}>
+        <div className="card">
           {/* Search & Filter Bar */}
-          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
-            <div style={{ position: 'relative', flex: 1, minWidth: '240px' }}>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+            <div style={{ position: 'relative', flex: 1, minWidth: '220px' }}>
               <Search size={18} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
               <input
                 type="text"
-                placeholder="Search by Batch ID (HM-2026...), Farmer, Farm, or Agent..."
+                placeholder="Search by Batch ID, Farmer, Farm, or Agent..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{
                   width: '100%',
-                  padding: '0.75rem 0.75rem 0.75rem 2.4rem',
+                  padding: '0.7rem 0.75rem 0.7rem 2.4rem',
                   borderRadius: '10px',
                   border: '1px solid var(--border-color)',
                   background: 'var(--bg-primary)',
                   color: 'var(--text-main)',
-                  fontSize: '0.88rem'
+                  fontSize: '0.85rem'
                 }}
               />
             </div>
 
             {/* Status Filter Buttons */}
-            <div style={{ display: 'flex', gap: '0.35rem', overflowX: 'auto', paddingBottom: '4px' }}>
+            <div style={{ display: 'flex', gap: '0.3rem', overflowX: 'auto', paddingBottom: '4px', maxWidth: '100%' }}>
               {['All', 'Collected', 'Accepted', 'Rejected', 'In Transit', 'Delivered'].map(status => (
                 <button
                   key={status}
                   onClick={() => setStatusFilter(status)}
                   style={{
-                    padding: '0.55rem 0.85rem',
+                    padding: '0.5rem 0.75rem',
                     borderRadius: '8px',
                     border: '1px solid var(--border-color)',
                     background: statusFilter === status ? 'var(--accent-emerald)' : 'var(--bg-primary)',
                     color: statusFilter === status ? '#FFF' : 'var(--text-muted)',
                     fontWeight: 700,
-                    fontSize: '0.78rem',
-                    cursor: 'pointer'
+                    fontSize: '0.75rem',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap'
                   }}
                 >
                   {status}
@@ -373,7 +375,7 @@ export default function AdminDashboard() {
               <p style={{ fontWeight: 600 }}>No milk batches found matching criteria.</p>
             </div>
           ) : (
-            <div style={{ overflowX: 'auto' }}>
+            <div className="table-responsive">
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '2px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
@@ -487,10 +489,10 @@ export default function AdminDashboard() {
               <p style={{ fontSize: '0.85rem' }}>All active milk collections meet purity and safety standards.</p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '1.25rem' }}>
               {rejectedQueue.map(batch => (
-                <div key={batch.batchId} className="card" style={{ padding: '1.5rem', borderLeft: '4px solid var(--accent-rose)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
+                <div key={batch.batchId} className="card" style={{ padding: 'clamp(1rem, 2.5vw, 1.5rem)', borderLeft: '4px solid var(--accent-rose)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem', gap: '0.5rem', flexWrap: 'wrap' }}>
                     <div>
                       <span style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--accent-rose)', fontFamily: 'monospace' }}>
                         {batch.batchId}
@@ -521,7 +523,7 @@ export default function AdminDashboard() {
                         "{batch.rejection.remarks}"
                       </p>
                     )}
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px', wordBreak: 'break-word' }}>
                       Rejected by: <strong>{batch.rejection?.agentName || batch.agentName}</strong> on {new Date(batch.rejection?.rejectedAt || batch.collectionDate).toLocaleString()}
                     </div>
                   </div>
@@ -547,12 +549,12 @@ export default function AdminDashboard() {
 
       {/* TAB 3: QUALITY TEST HISTORY */}
       {activeTab === 'quality' && (
-        <div className="card" style={{ padding: '1.5rem' }}>
+        <div className="card" style={{ padding: 'clamp(1rem, 2.5vw, 1.5rem)' }}>
           <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '1rem' }}>
             Laboratory & On-Site Quality Test Registry
           </h3>
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
+          <div className="table-responsive">
+            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem', minWidth: '680px' }}>
               <thead>
                 <tr style={{ borderBottom: '2px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
                   <th style={{ padding: '0.75rem 1rem' }}>Batch ID</th>
@@ -603,29 +605,8 @@ export default function AdminDashboard() {
       {/* MODAL 1: ADMIN REJECTION REVIEW & RESOLUTION MODAL */}
       {/* ========================================================== */}
       {reviewBatch && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.65)',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 100,
-          padding: '1rem'
-        }}>
-          <div style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '20px',
-            width: '100%',
-            maxWidth: '540px',
-            padding: '2rem',
-            boxShadow: 'var(--shadow-xl)'
-          }}>
+        <div className="modal-backdrop-custom">
+          <div className="modal-dialog-custom" style={{ maxWidth: '540px' }}>
             <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-main)', marginBottom: '0.5rem' }}>
               Review Quarantined Batch
             </h3>
@@ -634,7 +615,7 @@ export default function AdminDashboard() {
             </p>
 
             <div style={{ background: 'var(--bg-primary)', borderRadius: '14px', padding: '1rem', marginBottom: '1.25rem', border: '1px solid var(--border-color)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem' }}>
                 <span style={{ fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>{reviewBatch.batchId}</span>
                 <span style={{ fontWeight: 700, color: 'var(--text-main)' }}>{reviewBatch.liters} Liters</span>
               </div>
@@ -645,7 +626,7 @@ export default function AdminDashboard() {
                 Reported Reason: {reviewBatch.rejection?.reason}
               </div>
               {reviewBatch.rejection?.remarks && (
-                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px', fontStyle: 'italic' }}>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px', fontStyle: 'italic', wordBreak: 'break-word' }}>
                   "{reviewBatch.rejection.remarks}"
                 </div>
               )}
@@ -656,7 +637,7 @@ export default function AdminDashboard() {
                 <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.4rem' }}>
                   Admin Review Action
                 </label>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: '0.5rem' }}>
                   {[
                     { id: 'Approved', label: 'Approve & Pay', icon: ThumbsUp, color: 'var(--accent-emerald)' },
                     { id: 'Confirmed Rejected', label: 'Confirm Reject', icon: ThumbsDown, color: 'var(--accent-rose)' },
@@ -705,7 +686,8 @@ export default function AdminDashboard() {
                     border: '1px solid var(--border-color)',
                     background: 'var(--bg-primary)',
                     color: 'var(--text-main)',
-                    fontSize: '0.88rem'
+                    fontSize: '0.88rem',
+                    boxSizing: 'border-box'
                   }}
                 />
               </div>
@@ -737,32 +719,9 @@ export default function AdminDashboard() {
       {/* MODAL 2: BATCH AUDIT TRAIL & TRACEABILITY MODAL */}
       {/* ========================================================== */}
       {selectedBatch && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          background: 'rgba(0, 0, 0, 0.65)',
-          backdropFilter: 'blur(8px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 100,
-          padding: '1rem'
-        }}>
-          <div style={{
-            background: 'var(--bg-card)',
-            border: '1px solid var(--border-color)',
-            borderRadius: '20px',
-            width: '100%',
-            maxWidth: '580px',
-            maxHeight: '90vh',
-            overflowY: 'auto',
-            padding: '2rem',
-            boxShadow: 'var(--shadow-xl)'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem' }}>
+        <div className="modal-backdrop-custom">
+          <div className="modal-dialog-custom" style={{ maxWidth: '580px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem', gap: '0.5rem', flexWrap: 'wrap' }}>
               <div>
                 <span style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
                   {selectedBatch.batchId}
@@ -782,7 +741,7 @@ export default function AdminDashboard() {
                 <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase', marginBottom: '0.5rem' }}>
                   Verified Quality Parameters
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.5rem', textAlign: 'center' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(70px, 1fr))', gap: '0.5rem', textAlign: 'center' }}>
                   <div style={{ background: 'var(--bg-card)', padding: '0.5rem', borderRadius: '8px' }}>
                     <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Fat</div>
                     <div style={{ fontWeight: 800 }}>{selectedBatch.qualityTest.fatPercentage}%</div>
@@ -819,7 +778,7 @@ export default function AdminDashboard() {
                     borderLeft: '3px solid var(--accent-emerald)',
                     fontSize: '0.82rem'
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: 'var(--text-main)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, color: 'var(--text-main)', flexWrap: 'wrap', gap: '0.25rem' }}>
                       <span>{item.fromStatus} ➔ {item.toStatus}</span>
                       <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                         {new Date(item.changedAt).toLocaleString()}
@@ -829,7 +788,7 @@ export default function AdminDashboard() {
                       By: <strong>{item.changedBy}</strong> {item.reason ? `• Reason: ${item.reason}` : ''}
                     </div>
                     {item.remarks && (
-                      <div style={{ color: 'var(--text-main)', marginTop: '3px', fontStyle: 'italic', fontSize: '0.78rem' }}>
+                      <div style={{ color: 'var(--text-main)', marginTop: '3px', fontStyle: 'italic', fontSize: '0.78rem', wordBreak: 'break-word' }}>
                         "{item.remarks}"
                       </div>
                     )}

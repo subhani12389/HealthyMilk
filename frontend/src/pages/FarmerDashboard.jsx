@@ -210,34 +210,34 @@ export default function FarmerDashboard() {
   });
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem', maxWidth: '1200px', margin: '0 auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       
       {/* Top Welcome Banner */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.15) 0%, rgba(16, 185, 129, 0.05) 100%)',
         border: '1px solid var(--accent-emerald)',
         borderRadius: '20px',
-        padding: '1.5rem',
+        padding: 'clamp(1rem, 2.5vw, 1.5rem)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
         gap: '1rem'
       }}>
-        <div>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
+        <div style={{ minWidth: '220px', flex: '1 1 240px' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
             🌾 Verified Farmer Portal
           </div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+          <h2 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.5rem)', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
             {farmerProfile?.farmName || user?.farmName || user?.name || 'Patel Dairy Farm'}
           </h2>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px' }}>
             Location: {farmerProfile?.location || 'Kaira Valley'} • Cattle Count: {farmerProfile?.cattleCount || 15} Cows & Buffaloes
           </p>
         </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>CURRENT AVAILABLE MONEY</div>
-          <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '2px' }}>
+        <div style={{ textAlign: 'left', minWidth: '160px' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Available Balance</div>
+          <div style={{ fontSize: 'clamp(1.35rem, 4vw, 1.6rem)', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '2px' }}>
             ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
@@ -264,7 +264,7 @@ export default function FarmerDashboard() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
             {rejectedBatches.map(b => (
               <div key={b.batchId || b.id} style={{ background: 'var(--bg-card)', padding: '0.85rem 1rem', borderRadius: '12px', border: '1px solid var(--border-color)', fontSize: '0.85rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.4rem' }}>
                   <span style={{ fontWeight: 800, color: 'var(--accent-rose)', fontFamily: 'monospace' }}>{b.batchId}</span>
                   <span className={`badge ${b.rejection?.reviewStatus === 'Approved' ? 'badge-success' : 'badge-danger'}`}>
                     {b.rejection?.reviewStatus || 'Quarantined'}
@@ -289,7 +289,7 @@ export default function FarmerDashboard() {
 
       {/* TAB 1: CURRENT MILK STATUS & REQUEST PICKUP */}
       {(!activeTab || activeTab === 'status') && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+        <div className="grid-responsive-2">
           
           {/* Left: Request Milk Collection Form */}
           <div className="card">
@@ -472,11 +472,11 @@ export default function FarmerDashboard() {
       {/* TAB 2: ACCOUNT BALANCE & PAYOUTS */}
       {activeTab === 'balance' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.25rem' }}>
+          <div className="grid-responsive-3">
             
             <div className="card" style={{ background: 'linear-gradient(135deg, #059669 0%, #047857 100%)', color: '#FFFFFF' }}>
               <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>Current Earnings Balance</div>
-              <div style={{ fontSize: '2.25rem', fontWeight: 800, margin: '0.5rem 0' }}>
+              <div style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.25rem)', fontWeight: 800, margin: '0.4rem 0' }}>
                 ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <button
@@ -501,7 +501,7 @@ export default function FarmerDashboard() {
 
             <div className="card">
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Volume Collected</div>
-              <div style={{ fontSize: '1.8rem', fontWeight: 800, margin: '0.4rem 0', color: 'var(--text-main)' }}>
+              <div style={{ fontSize: 'clamp(1.4rem, 3vw, 1.8rem)', fontWeight: 800, margin: '0.4rem 0', color: 'var(--text-main)' }}>
                 {stats?.totalLitersAllTime || 110} Liters
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', fontWeight: 600 }}>
@@ -523,7 +523,7 @@ export default function FarmerDashboard() {
 
           <div className="card">
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem' }}>Transaction & Payout Log</h3>
-            <div style={{ overflowX: 'auto' }}>
+            <div className="table-responsive">
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
@@ -563,12 +563,12 @@ export default function FarmerDashboard() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
             <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Milk Batch Traceability & Supply History</h3>
             
-            <div style={{ display: 'flex', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', width: '100%', maxWidth: '420px' }}>
               <button onClick={exportCSV} className="btn-secondary" style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem' }}>
                 <Download size={16} /> Export CSV
               </button>
 
-              <div style={{ position: 'relative', width: '240px' }}>
+              <div style={{ position: 'relative', flex: 1, minWidth: '180px' }}>
                 <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
                 <input
                   type="text"
@@ -589,7 +589,7 @@ export default function FarmerDashboard() {
             </div>
           </div>
 
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-responsive">
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
@@ -695,13 +695,9 @@ export default function FarmerDashboard() {
 
       {/* QR Code Modal */}
       {selectedQRBatch && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(6px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem'
-        }}>
-          <div className="card" style={{ width: '440px', maxWidth: '95%', textAlign: 'center' }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
+        <div className="modal-backdrop-custom" onClick={() => setSelectedQRBatch(null)}>
+          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
               HEALTHYMILK DIGITAL CERTIFICATE
             </div>
             <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '4px' }}>
@@ -731,12 +727,8 @@ export default function FarmerDashboard() {
 
       {/* Payout Withdrawal Modal */}
       {showPayoutModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(5px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
-        }}>
-          <div className="card" style={{ width: '400px', maxWidth: '90%' }}>
+        <div className="modal-backdrop-custom" onClick={() => setShowPayoutModal(false)}>
+          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()}>
             <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Initiate Payout Withdrawal</h3>
 
             {payoutMsg && (

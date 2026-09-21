@@ -110,7 +110,10 @@ input, select, textarea {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
-  padding: 1.5rem;
+  padding: clamp(1rem, 2.5vw, 1.5rem);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .btn-primary {
@@ -121,9 +124,11 @@ input, select, textarea {
   font-weight: 600;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   box-shadow: 0 4px 12px rgba(5, 150, 105, 0.25);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  min-height: 44px;
 }
 .btn-primary:hover {
   transform: translateY(-1px);
@@ -142,7 +147,9 @@ input, select, textarea {
   font-weight: 600;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
+  min-height: 44px;
 }
 .btn-secondary:hover {
   background: var(--border-color);
@@ -151,11 +158,12 @@ input, select, textarea {
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.25rem 0.75rem;
+  padding: 0.25rem 0.65rem;
   border-radius: var(--radius-full);
-  font-size: 0.8rem;
-  font-weight: 600;
+  font-size: 0.78rem;
+  font-weight: 700;
   gap: 0.35rem;
+  white-space: nowrap;
 }
 
 .badge-success {
@@ -176,6 +184,141 @@ input, select, textarea {
 .badge-danger {
   background: var(--accent-rose-light);
   color: var(--accent-rose);
+}
+
+/* ========================================================= */
+/* Responsive Grids & Layout Utilities                      */
+/* ========================================================= */
+.grid-responsive-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+}
+@media (min-width: 900px) {
+  .grid-responsive-2 {
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+}
+
+.grid-responsive-2-unequal {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+}
+@media (min-width: 960px) {
+  .grid-responsive-2-unequal {
+    grid-template-columns: 1.2fr 1fr;
+    gap: 1.5rem;
+  }
+}
+
+.grid-responsive-3 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+@media (min-width: 640px) {
+  .grid-responsive-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 1024px) {
+  .grid-responsive-3 {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1.25rem;
+  }
+}
+
+.grid-responsive-4 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+@media (min-width: 1024px) {
+  .grid-responsive-4 {
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+  }
+}
+
+.grid-kpi-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 1rem;
+}
+
+/* Responsive Table Wrapper */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: var(--radius-sm);
+  margin-top: 0.5rem;
+}
+.table-responsive table {
+  width: 100%;
+  min-width: 600px;
+  border-collapse: collapse;
+}
+
+/* Responsive Modals & Dialogs */
+.modal-backdrop-custom {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.modal-dialog-custom {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: clamp(16px, 3vw, 22px);
+  box-shadow: var(--shadow-lg);
+  width: min(94vw, 560px);
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: clamp(1.2rem, 3vw, 2rem);
+  position: relative;
+  box-sizing: border-box;
+}
+
+.modal-dialog-wide {
+  width: min(95vw, 760px);
+}
+
+/* Mobile Sidebar Drawer & Overlay */
+.mobile-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 998;
+  transition: opacity 0.3s ease;
+}
+
+@media (max-width: 1023px) {
+  .sidebar-desktop {
+    display: none !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .mobile-drawer-backdrop,
+  .sidebar-mobile {
+    display: none !important;
+  }
+  .sidebar-desktop {
+    display: flex !important;
+  }
 }
 
 /* Animations */

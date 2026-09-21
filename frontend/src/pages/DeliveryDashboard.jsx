@@ -225,28 +225,28 @@ export default function DeliveryDashboard() {
   const currentBalance = user?.balance !== undefined ? user.balance : (agentProfile?.balance || 0);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem', maxWidth: '1150px', margin: '0 auto' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1150px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       
       {/* Top Banner with Available Money */}
       <div style={{
         background: 'linear-gradient(135deg, rgba(217, 119, 6, 0.15) 0%, rgba(245, 158, 11, 0.05) 100%)',
         border: '1px solid var(--accent-amber)',
         borderRadius: '20px',
-        padding: '1.5rem',
+        padding: 'clamp(1rem, 2.5vw, 1.5rem)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         flexWrap: 'wrap',
         gap: '1rem'
       }}>
-        <div>
-          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--accent-amber)', textTransform: 'uppercase' }}>
+        <div style={{ minWidth: '220px', flex: '1 1 240px' }}>
+          <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-amber)', textTransform: 'uppercase' }}>
             🚚 Certified Delivery Agent Portal
           </div>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+          <h2 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.5rem)', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
             {agentProfile?.name || user?.name || 'Delivery Agent'}
           </h2>
-          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px' }}>
             Vehicle: {agentProfile?.vehicleNo || 'GJ-07-MK-4421'} • Route: {agentProfile?.assignedArea || 'Sector 14 & Green Valley'}
           </p>
         </div>
@@ -256,35 +256,36 @@ export default function DeliveryDashboard() {
           background: 'var(--bg-card)',
           border: '1px solid var(--border-color)',
           borderRadius: '16px',
-          padding: '0.85rem 1.25rem',
-          textAlign: 'right',
+          padding: '0.75rem clamp(0.75rem, 2vw, 1.25rem)',
+          textAlign: 'left',
+          minWidth: '160px',
           boxShadow: 'var(--shadow-sm)'
         }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>COMMISSION BALANCE</div>
-          <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '2px' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>COMMISSION BALANCE</div>
+          <div style={{ fontSize: 'clamp(1.35rem, 4vw, 1.6rem)', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '2px' }}>
             ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
             ₹50 earned per verified collection & delivery
           </div>
         </div>
       </div>
 
       {msg && (
-        <div style={{ background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', padding: '0.85rem 1rem', borderRadius: '12px', fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div style={{ background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', padding: '0.75rem 1rem', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <CheckCircle2 size={18} /> {msg}
         </div>
       )}
 
       {errorMsg && (
-        <div style={{ background: 'var(--accent-rose-light)', color: 'var(--accent-rose)', padding: '0.85rem 1rem', borderRadius: '12px', fontWeight: 700, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <div style={{ background: 'var(--accent-rose-light)', color: 'var(--accent-rose)', padding: '0.75rem 1rem', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
           <AlertTriangle size={18} /> {errorMsg}
         </div>
       )}
 
       {/* TAB 1: DISPATCH & PICKUPS QUEUE */}
       {(!activeTab || activeTab === 'status') && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '1.5rem' }}>
+        <div className="grid-responsive-2-unequal">
           
           {/* Farmer Milk Pickups with Batch ID & Testing/Rejection Actions */}
           <div className="card">
@@ -460,15 +461,15 @@ export default function DeliveryDashboard() {
         </div>
       )}
 
-      {/* TAB 2: ACCOUNT BALANCE & EARNINGS FOR DELIVERY AGENT */}
+      {/* TAB 2: AGENT BALANCE & PAYOUTS */}
       {activeTab === 'balance' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1.25rem' }}>
+          <div className="grid-responsive-3">
             
             <div className="card" style={{ background: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)', color: '#FFFFFF' }}>
               <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>Current Available Earnings</div>
-              <div style={{ fontSize: '2.25rem', fontWeight: 800, margin: '0.5rem 0' }}>
+              <div style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.25rem)', fontWeight: 800, margin: '0.4rem 0' }}>
                 ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <button
@@ -487,13 +488,13 @@ export default function DeliveryDashboard() {
                   cursor: 'pointer'
                 }}
               >
-                Withdraw to HDFC Bank <ArrowUpRight size={16} />
+                Withdraw to Bank <ArrowUpRight size={16} />
               </button>
             </div>
 
             <div className="card">
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Completed Deliveries</div>
-              <div style={{ fontSize: '1.8rem', fontWeight: 800, margin: '0.4rem 0', color: 'var(--text-main)' }}>
+              <div style={{ fontSize: 'clamp(1.4rem, 3vw, 1.8rem)', fontWeight: 800, margin: '0.4rem 0', color: 'var(--text-main)' }}>
                 {agentProfile?.totalDeliveries || 69} Completed
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', fontWeight: 600 }}>
@@ -515,7 +516,7 @@ export default function DeliveryDashboard() {
 
           <div className="card">
             <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1rem' }}>Delivery Fee & Payout History</h3>
-            <div style={{ overflowX: 'auto' }}>
+            <div className="table-responsive">
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
@@ -552,7 +553,7 @@ export default function DeliveryDashboard() {
       {activeTab === 'history' && (
         <div className="card">
           <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1.25rem' }}>Completed Batch Collections & Tasks</h3>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="table-responsive">
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
@@ -594,12 +595,8 @@ export default function DeliveryDashboard() {
       {/* MODAL 1: QUALITY TESTING & ACCEPTANCE MODAL */}
       {/* ========================================================== */}
       {activePickup && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(8px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem'
-        }}>
-          <div className="card" style={{ width: '500px', maxWidth: '95%' }}>
+        <div className="modal-backdrop-custom" onClick={() => setActivePickup(null)}>
+          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
               <div>
                 <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
@@ -619,20 +616,22 @@ export default function DeliveryDashboard() {
               background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.15) 0%, rgba(37, 99, 235, 0.1) 100%)',
               border: '1px solid var(--accent-emerald)',
               borderRadius: '14px',
-              padding: '1rem',
+              padding: '0.85rem 1rem',
               marginBottom: '1.25rem',
               display: 'flex',
               justifyContent: 'space-between',
-              alignItems: 'center'
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '0.5rem'
             }}>
               <div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Dynamic Rate & Payout</div>
-                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Dynamic Rate & Payout</div>
+                <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
                   ₹{calculatedRate}/L ➔ ₹{calculatedTotal}
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700 }}>Quality Score</div>
+              <div style={{ textAlign: 'left' }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700 }}>Quality Score</div>
                 <div style={{ fontSize: '1.2rem', fontWeight: 800, color: calculatedScore >= 80 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
                   {calculatedScore}/100
                 </div>
@@ -640,7 +639,7 @@ export default function DeliveryDashboard() {
             </div>
 
             <form onSubmit={handleTestAndCollect} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Fat Percentage (%)</label>
                   <input
@@ -651,7 +650,7 @@ export default function DeliveryDashboard() {
                     required
                     value={testedFat}
                     onChange={(e) => setTestedFat(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.1rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
                   />
                 </div>
 
@@ -665,12 +664,12 @@ export default function DeliveryDashboard() {
                     required
                     value={testedSNF}
                     onChange={(e) => setTestedSNF(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.1rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
                   />
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Lactometer Reading</label>
                   <input
@@ -681,7 +680,7 @@ export default function DeliveryDashboard() {
                     required
                     value={lactometer}
                     onChange={(e) => setLactometer(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.1rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
                   />
                 </div>
 
@@ -695,7 +694,7 @@ export default function DeliveryDashboard() {
                     required
                     value={temperature}
                     onChange={(e) => setTemperature(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.1rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
                   />
                 </div>
               </div>
@@ -711,11 +710,11 @@ export default function DeliveryDashboard() {
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
-                <button type="button" onClick={() => setActivePickup(null)} className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => setActivePickup(null)} className="btn-secondary" style={{ flex: 1, minWidth: '110px', justifyContent: 'center' }}>
                   Cancel
                 </button>
-                <button type="submit" disabled={submittingTest} className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
+                <button type="submit" disabled={submittingTest} className="btn-primary" style={{ flex: 1.5, minWidth: '150px', justifyContent: 'center' }}>
                   {submittingTest ? 'Saving...' : 'Verify & Credit Farmer (₹50 Fee)'}
                 </button>
               </div>
@@ -728,12 +727,8 @@ export default function DeliveryDashboard() {
       {/* MODAL 2: BATCH REJECTION MODAL */}
       {/* ========================================================== */}
       {rejectingPickup && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem'
-        }}>
-          <div className="card" style={{ width: '480px', maxWidth: '95%', borderTop: '4px solid var(--accent-rose)' }}>
+        <div className="modal-backdrop-custom" onClick={() => setRejectingPickup(null)}>
+          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()} style={{ borderTop: '4px solid var(--accent-rose)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
               <div>
                 <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-rose)', textTransform: 'uppercase' }}>
@@ -791,17 +786,17 @@ export default function DeliveryDashboard() {
                   style={{ width: '100%', marginTop: '4px', fontSize: '0.82rem' }}
                 />
                 {evidencePhoto && (
-                  <div style={{ marginTop: '0.5rem', borderRadius: '8px', overflow: 'hidden', maxHeight: '120px' }}>
-                    <img src={evidencePhoto} alt="Rejection Evidence" style={{ width: '100%', objectFit: 'cover' }} />
+                  <div style={{ marginTop: '0.5rem', borderRadius: '8px', overflow: 'hidden', maxHeight: '140px' }}>
+                    <img src={evidencePhoto} alt="Rejection Evidence" style={{ width: '100%', maxHeight: '140px', objectFit: 'contain' }} />
                   </div>
                 )}
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
-                <button type="button" onClick={() => setRejectingPickup(null)} className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
+                <button type="button" onClick={() => setRejectingPickup(null)} className="btn-secondary" style={{ flex: 1, minWidth: '100px', justifyContent: 'center' }}>
                   Cancel
                 </button>
-                <button type="submit" disabled={submittingRejection} className="btn-primary" style={{ flex: 1, justifyContent: 'center', background: 'var(--accent-rose)', borderColor: 'var(--accent-rose)' }}>
+                <button type="submit" disabled={submittingRejection} className="btn-primary" style={{ flex: 1.5, minWidth: '140px', justifyContent: 'center', background: 'var(--accent-rose)', borderColor: 'var(--accent-rose)' }}>
                   {submittingRejection ? 'Quarantining...' : 'Confirm Rejection'}
                 </button>
               </div>
@@ -812,12 +807,8 @@ export default function DeliveryDashboard() {
 
       {/* Payout Withdrawal Modal */}
       {showPayoutModal && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(5px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200
-        }}>
-          <div className="card" style={{ width: '400px', maxWidth: '90%' }}>
+        <div className="modal-backdrop-custom" onClick={() => setShowPayoutModal(false)}>
+          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()}>
             <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Initiate Agent Payout</h3>
 
             {payoutMsg && (
