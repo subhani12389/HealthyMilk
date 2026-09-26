@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const { users, supabase, otpStore, notifications } = require('../store');
 const User = require('../models/User');
 const { JWT_SECRET, authLimiter, verifyToken } = require('../middleware/authMiddleware');
@@ -119,15 +120,17 @@ router.post('/send-otp', authLimiter, async (req, res) => {
 
     // Check if phone number already exists in DB or memory store
     let isExistingUser = false;
-    try {
-      const dbUser = await User.findOne({
-        $or: [
-          { phoneNumber: cleanMobile },
-          { phoneNumber: `+91${cleanMobile}` }
-        ]
-      });
-      if (dbUser) isExistingUser = true;
-    } catch (e) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const dbUser = await User.findOne({
+          $or: [
+            { phoneNumber: cleanMobile },
+            { phoneNumber: `+91${cleanMobile}` }
+          ]
+        });
+        if (dbUser) isExistingUser = true;
+      } catch (e) {}
+    }
 
     if (!isExistingUser) {
       const memUser = users.find(u =>
@@ -259,14 +262,16 @@ router.post('/verify-otp', async (req, res) => {
 
     // Check if user already exists
     let existingUser = null;
-    try {
-      existingUser = await User.findOne({
-        $or: [
-          { phoneNumber: cleanMobile },
-          { phoneNumber: `+91${cleanMobile}` }
-        ]
-      });
-    } catch (e) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        existingUser = await User.findOne({
+          $or: [
+            { phoneNumber: cleanMobile },
+            { phoneNumber: `+91${cleanMobile}` }
+          ]
+        });
+      } catch (e) {}
+    }
 
     if (!existingUser) {
       existingUser = users.find(u =>
@@ -355,14 +360,16 @@ router.post('/create-account', authLimiter, async (req, res) => {
 
     // Check for Duplicate Phone Number
     let duplicateUser = null;
-    try {
-      duplicateUser = await User.findOne({
-        $or: [
-          { phoneNumber: cleanMobile },
-          { phoneNumber: `+91${cleanMobile}` }
-        ]
-      });
-    } catch (e) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        duplicateUser = await User.findOne({
+          $or: [
+            { phoneNumber: cleanMobile },
+            { phoneNumber: `+91${cleanMobile}` }
+          ]
+        });
+      } catch (e) {}
+    }
 
     if (!duplicateUser) {
       duplicateUser = users.find(u =>
@@ -385,30 +392,32 @@ router.post('/create-account', authLimiter, async (req, res) => {
     if (selectedRole === 'farmer') defaultName = 'Farmer User';
     if (selectedRole === 'delivery_agent') defaultName = 'Delivery Agent';
 
-    try {
-      newUser = new User({
-        phoneNumber: cleanMobile,
-        countryCode: countryCode || '+91',
-        role: selectedRole,
-        name: defaultName,
-        isPhoneVerified: true,
-        isActive: true,
-        farmName: farmName ? farmName.trim() : `${defaultName}'s Dairy Farm`,
-        address: address ? address.trim() : '123 Green Valley, Sector 14',
-        vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-4421',
-        assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley'
-      });
-
-      await newUser.save();
-    } catch (dbErr) {
-      // Handle MongoDB Duplicate Key Error (E11000) for Race Condition Safety
-      if (dbErr.code === 11000) {
-        return res.status(409).json({
-          success: false,
-          message: 'An account already exists with this phone number.'
+    if (mongoose.connection.readyState === 1) {
+      try {
+        newUser = new User({
+          phoneNumber: cleanMobile,
+          countryCode: countryCode || '+91',
+          role: selectedRole,
+          name: defaultName,
+          isPhoneVerified: true,
+          isActive: true,
+          farmName: farmName ? farmName.trim() : `${defaultName}'s Dairy Farm`,
+          address: address ? address.trim() : '123 Green Valley, Sector 14',
+          vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-4421',
+          assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley'
         });
+
+        await newUser.save();
+      } catch (dbErr) {
+        // Handle MongoDB Duplicate Key Error (E11000) for Race Condition Safety
+        if (dbErr.code === 11000) {
+          return res.status(409).json({
+            success: false,
+            message: 'An account already exists with this phone number.'
+          });
+        }
+        console.warn('DB create account save skipped/fallback:', dbErr.message);
       }
-      console.warn('DB create account save skipped/fallback:', dbErr.message);
     }
 
     if (!newUser) {
@@ -417,13 +426,41 @@ router.post('/create-account', authLimiter, async (req, res) => {
         id: userId,
         _id: userId,
         phoneNumber: cleanMobile,
+        phone: cleanMobile,
         countryCode: countryCode || '+91',
         role: selectedRole,
         name: defaultName,
         isPhoneVerified: true,
         isActive: true,
         balance: 0.00,
-        createdAt: new Date().toISOString()
+        farmName: farmName ? farmName.trim() : `${defaultName}'s Dairy Farm`,
+        location: 'Kaira Valley, Anand',
+        cattleCount: 15,
+        rating: 5.0,
+        address: address ? address.trim() : 'Apt 402, Green Acres Heights, Sector 14',
+        vehicleNo: vehicleNo ? vehicleNo.trim() : 'GJ-07-MK-4421',
+        assignedArea: assignedArea ? assignedArea.trim() : 'Sector 14 & Green Valley',
+        totalDeliveries: 0,
+        bankDetails: {
+          accountNo: 'XXXX-XXXX-8921',
+          ifsc: 'SBIN0004123',
+          bankName: 'State Bank of India'
+        },
+        subscription: {
+          id: `sub_${userId}`,
+          planName: 'Pure Fresh A2 Cow Milk',
+          dailyLiters: 2,
+          totalDays: 30,
+          daysRemaining: 30,
+          startDate: new Date().toISOString().split('T')[0],
+          endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+          status: 'Active',
+          pricePerLiter: 65,
+          totalAmountPaid: 3900,
+          deliveryTimeSlot: '6:30 AM - 7:30 AM'
+        },
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
       users.push(newUser);
     }

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
 const { milkBatches, generateBatchId, notifications } = require('../store');
 
@@ -8,33 +9,34 @@ router.get('/', async (req, res) => {
   try {
     const { status, farmerId, agentId, search } = req.query;
     
-    // Attempt to query MongoDB first
+    // Attempt to query MongoDB first if connected
     let batches = [];
-    try {
-      const query = {};
-      if (status && status !== 'all' && status !== 'All') {
-        query.status = status;
-      }
-      if (farmerId) {
-        query.farmerId = farmerId;
-      }
-      if (agentId) {
-        query.agentId = agentId;
-      }
-      if (search) {
-        const regex = new RegExp(search, 'i');
-        query.$or = [
-          { batchId: regex },
-          { farmerName: regex },
-          { farmName: regex },
-          { agentName: regex }
-        ];
-      }
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const query = {};
+        if (status && status !== 'all' && status !== 'All') {
+          query.status = status;
+        }
+        if (farmerId) {
+          query.farmerId = farmerId;
+        }
+        if (agentId) {
+          query.agentId = agentId;
+        }
+        if (search) {
+          const regex = new RegExp(search, 'i');
+          query.$or = [
+            { batchId: regex },
+            { farmerName: regex },
+            { farmName: regex },
+            { agentName: regex }
+          ];
+        }
 
-      batches = await MilkBatch.find(query).sort({ collectionDate: -1 }).lean();
-    } catch (dbErr) {
-      // Fallback to in-memory store
-      batches = [];
+        batches = await MilkBatch.find(query).sort({ collectionDate: -1 }).lean();
+      } catch (dbErr) {
+        batches = [];
+      }
     }
 
     if (!batches || batches.length === 0) {
@@ -77,9 +79,11 @@ router.get('/:batchId', async (req, res) => {
     const { batchId } = req.params;
     let batch = null;
 
-    try {
-      batch = await MilkBatch.findOne({ batchId }).lean();
-    } catch (dbErr) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        batch = await MilkBatch.findOne({ batchId }).lean();
+      } catch (dbErr) {}
+    }
 
     if (!batch) {
       batch = milkBatches.find(b => b.batchId === batchId || b.id === batchId);
@@ -139,11 +143,13 @@ router.post('/create', async (req, res) => {
       ]
     };
 
-    try {
-      const created = new MilkBatch(batchDoc);
-      await created.save();
-    } catch (dbErr) {
-      console.warn('DB Batch save fallback:', dbErr.message);
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const created = new MilkBatch(batchDoc);
+        await created.save();
+      } catch (dbErr) {
+        console.warn('DB Batch save fallback:', dbErr.message);
+      }
     }
 
     milkBatches.unshift(batchDoc);
@@ -171,15 +177,17 @@ router.put('/:batchId/status', async (req, res) => {
     }
 
     let batch = null;
-    try {
-      batch = await MilkBatch.findOne({ batchId });
-      if (batch) {
-        const prevStatus = batch.status;
-        batch.status = newStatus;
-        batch.addAuditLog(prevStatus, newStatus, changedBy, changedById, reason, remarks);
-        await batch.save();
-      }
-    } catch (dbErr) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        batch = await MilkBatch.findOne({ batchId });
+        if (batch) {
+          const prevStatus = batch.status;
+          batch.status = newStatus;
+          batch.addAuditLog(prevStatus, newStatus, changedBy, changedById, reason, remarks);
+          await batch.save();
+        }
+      } catch (dbErr) {}
+    }
 
     const memBatch = milkBatches.find(b => b.batchId === batchId || b.id === batchId);
     if (memBatch) {

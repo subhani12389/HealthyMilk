@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
 const User = require('../models/User');
 const { deliveryTasks, milkLogs, milkBatches, users, transactions, notifications } = require('../store');
@@ -14,9 +15,11 @@ router.get('/dashboard', async (req, res) => {
 
   // Fetch batches for this agent or all active collection batches
   let batches = [];
-  try {
-    batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
-  } catch (e) {}
+  if (mongoose.connection.readyState === 1) {
+    try {
+      batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
+    } catch (e) {}
+  }
 
   if (!batches || batches.length === 0) {
     batches = [...milkBatches];
@@ -88,9 +91,11 @@ router.get('/dashboard', async (req, res) => {
 // GET /api/delivery/tasks
 router.get('/tasks', async (req, res) => {
   let batches = [];
-  try {
-    batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
-  } catch (e) {}
+  if (mongoose.connection.readyState === 1) {
+    try {
+      batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
+    } catch (e) {}
+  }
 
   if (!batches || batches.length === 0) {
     batches = [...milkBatches];
@@ -109,14 +114,16 @@ router.post('/test-and-collect', async (req, res) => {
 
   const targetId = batchId || pickupId;
   let batchDoc = null;
-  try {
-    batchDoc = await MilkBatch.findOne({
-      $or: [
-        { batchId: targetId },
-        { id: targetId }
-      ]
-    });
-  } catch (e) {}
+  if (mongoose.connection.readyState === 1) {
+    try {
+      batchDoc = await MilkBatch.findOne({
+        $or: [
+          { batchId: targetId },
+          { id: targetId }
+        ]
+      });
+    } catch (e) {}
+  }
 
   let memBatch = milkBatches.find(b => b.batchId === targetId || b.id === targetId);
 
@@ -315,14 +322,16 @@ router.post('/reject-batch', async (req, res) => {
 
     const targetId = batchId || pickupId;
     let batchDoc = null;
-    try {
-      batchDoc = await MilkBatch.findOne({
-        $or: [
-          { batchId: targetId },
-          { id: targetId }
-        ]
-      });
-    } catch (e) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        batchDoc = await MilkBatch.findOne({
+          $or: [
+            { batchId: targetId },
+            { id: targetId }
+          ]
+        });
+      } catch (e) {}
+    }
 
     let memBatch = milkBatches.find(b => b.batchId === targetId || b.id === targetId);
 
@@ -345,7 +354,7 @@ router.post('/reject-batch', async (req, res) => {
     };
 
     // Update DB Batch
-    if (batchDoc) {
+    if (batchDoc && mongoose.connection.readyState === 1) {
       const prevStatus = batchDoc.status;
       batchDoc.status = 'Rejected';
       batchDoc.rejection = rejectionData;
@@ -429,23 +438,46 @@ router.post('/reject-batch', async (req, res) => {
 });
 
 // POST /api/delivery/payout - Delivery Agent bank withdrawal
-router.post('/payout', (req, res) => {
+router.post('/payout', async (req, res) => {
   const { agentId, amount } = req.body;
-  const agent = users.find(u => u.id === agentId) || users.find(u => u.role === 'agent' || u.role === 'delivery_agent');
 
-  if (!agent) return res.status(404).json({ success: false, message: 'Delivery Agent not found.' });
+  const payoutAmt = parseFloat(amount);
+  if (isNaN(payoutAmt) || payoutAmt <= 0) {
+    return res.status(400).json({ success: false, message: 'Please enter a valid positive withdrawal amount.' });
+  }
 
-  const payoutAmt = parseFloat(amount) || agent.balance;
+  let agent = null;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      agent = await User.findById(agentId);
+    } catch (e) {}
+  }
+  if (!agent) {
+    agent = users.find(u => u.id === agentId || u._id === agentId) || users.find(u => u.role === 'agent' || u.role === 'delivery_agent');
+  }
 
-  if (payoutAmt <= 0 || payoutAmt > (agent.balance || 0)) {
-    return res.status(400).json({ success: false, message: 'Invalid withdrawal amount or insufficient balance.' });
+  if (!agent) {
+    agent = { id: agentId || 'agent_1', name: 'Delivery Agent', role: 'delivery_agent', balance: 0 };
+    users.push(agent);
+  }
+
+  if (payoutAmt > (agent.balance || 0)) {
+    return res.status(400).json({
+      success: false,
+      message: `Insufficient balance. Available: ₹${(agent.balance || 0).toFixed(2)}, Requested: ₹${payoutAmt.toFixed(2)}`
+    });
   }
 
   agent.balance = (agent.balance || 0) - payoutAmt;
+  if (agent.save && mongoose.connection.readyState === 1) {
+    try {
+      await agent.save();
+    } catch (e) {}
+  }
 
   const newTx = {
     id: `tx_${Date.now()}`,
-    agentId: agent.id,
+    agentId: agent.id || (agent._id ? agent._id.toString() : agentId),
     amount: payoutAmt,
     type: 'Bank Withdrawal',
     date: new Date().toLocaleDateString(),
@@ -457,7 +489,7 @@ router.post('/payout', (req, res) => {
 
   notifications.unshift({
     id: `notif_${Date.now()}`,
-    userId: agent.id,
+    userId: agent.id || (agent._id ? agent._id.toString() : agentId),
     title: 'Agent Payout Requested',
     message: `Withdrawal of ₹${payoutAmt.toFixed(2)} requested to bank account.`,
     time: 'Just now',
@@ -479,15 +511,17 @@ router.post('/update-status', async (req, res) => {
 
   if (type === 'farmer_pickup') {
     let batchDoc = null;
-    try {
-      batchDoc = await MilkBatch.findOne({ $or: [{ batchId: taskId }, { id: taskId }] });
-      if (batchDoc) {
-        const prev = batchDoc.status;
-        batchDoc.status = status;
-        batchDoc.addAuditLog(prev, status, 'Delivery Agent', agentId, `Status updated to ${status}`);
-        await batchDoc.save();
-      }
-    } catch (e) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        batchDoc = await MilkBatch.findOne({ $or: [{ batchId: taskId }, { id: taskId }] });
+        if (batchDoc) {
+          const prev = batchDoc.status;
+          batchDoc.status = status;
+          batchDoc.addAuditLog(prev, status, 'Delivery Agent', agentId, `Status updated to ${status}`);
+          await batchDoc.save();
+        }
+      } catch (e) {}
+    }
 
     const mem = milkBatches.find(b => b.batchId === taskId || b.id === taskId);
     if (mem) {

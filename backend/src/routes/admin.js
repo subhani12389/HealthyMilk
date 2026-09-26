@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
 const User = require('../models/User');
 const { users, milkBatches, transactions, notifications } = require('../store');
@@ -8,9 +9,11 @@ const { users, milkBatches, transactions, notifications } = require('../store');
 router.get('/dashboard', async (req, res) => {
   try {
     let allBatches = [];
-    try {
-      allBatches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
-    } catch (e) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        allBatches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
+      } catch (e) {}
+    }
 
     if (!allBatches || allBatches.length === 0) {
       allBatches = [...milkBatches];
@@ -31,12 +34,20 @@ router.get('/dashboard', async (req, res) => {
     const rejectedQueue = allBatches.filter(b => b.status === 'Rejected' || b.rejection);
 
     let dbUsersCount = { farmers: 0, consumers: 0, agents: 0 };
-    try {
-      const farmersCount = await User.countDocuments({ role: 'farmer' });
-      const consumersCount = await User.countDocuments({ role: 'consumer' });
-      const agentsCount = await User.countDocuments({ role: { $in: ['agent', 'delivery_agent'] } });
-      dbUsersCount = { farmers: farmersCount, consumers: consumersCount, agents: agentsCount };
-    } catch (e) {
+    if (mongoose.connection.readyState === 1) {
+      try {
+        const farmersCount = await User.countDocuments({ role: 'farmer' });
+        const consumersCount = await User.countDocuments({ role: 'consumer' });
+        const agentsCount = await User.countDocuments({ role: { $in: ['agent', 'delivery_agent'] } });
+        dbUsersCount = { farmers: farmersCount, consumers: consumersCount, agents: agentsCount };
+      } catch (e) {
+        dbUsersCount = {
+          farmers: users.filter(u => u.role === 'farmer').length || 12,
+          consumers: users.filter(u => u.role === 'consumer').length || 148,
+          agents: users.filter(u => u.role === 'agent' || u.role === 'delivery_agent').length || 8
+        };
+      }
+    } else {
       dbUsersCount = {
         farmers: users.filter(u => u.role === 'farmer').length || 12,
         consumers: users.filter(u => u.role === 'consumer').length || 148,
@@ -77,9 +88,11 @@ router.post('/review-rejection', async (req, res) => {
     }
 
     let batch = null;
-    try {
-      batch = await MilkBatch.findOne({ batchId });
-    } catch (e) {}
+    if (mongoose.connection.readyState === 1) {
+      try {
+        batch = await MilkBatch.findOne({ batchId });
+      } catch (e) {}
+    }
 
     let memBatch = milkBatches.find(b => b.batchId === batchId || b.id === batchId);
 
@@ -122,13 +135,15 @@ router.post('/review-rejection', async (req, res) => {
       }
 
       // Credit Farmer balance in DB & memory
-      try {
-        const farmerDoc = await User.findById(targetBatch.farmerId);
-        if (farmerDoc) {
-          farmerDoc.balance = (farmerDoc.balance || 0) + amount;
-          await farmerDoc.save();
-        }
-      } catch (e) {}
+      if (mongoose.connection.readyState === 1) {
+        try {
+          const farmerDoc = await User.findById(targetBatch.farmerId);
+          if (farmerDoc) {
+            farmerDoc.balance = (farmerDoc.balance || 0) + amount;
+            await farmerDoc.save();
+          }
+        } catch (e) {}
+      }
 
       const farmerMem = users.find(u => u.id === targetBatch.farmerId || u._id === targetBatch.farmerId);
       if (farmerMem) {

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
 const { users, deliveryTasks, milkBatches, notifications } = require('../store');
 
@@ -13,9 +14,11 @@ router.get('/dashboard', async (req, res) => {
 
   // Find latest accepted batch to show traceable quality to consumer
   let activeBatch = null;
-  try {
-    activeBatch = await MilkBatch.findOne({ status: { $in: ['Accepted', 'In Transit', 'Delivered'] } }).sort({ collectionDate: -1 }).lean();
-  } catch (e) {}
+  if (mongoose.connection.readyState === 1) {
+    try {
+      activeBatch = await MilkBatch.findOne({ status: { $in: ['Accepted', 'In Transit', 'Delivered'] } }).sort({ collectionDate: -1 }).lean();
+    } catch (e) {}
+  }
 
   if (!activeBatch) {
     activeBatch = milkBatches.find(b => b.status === 'Accepted' || b.status === 'In Transit' || b.status === 'Delivered') || milkBatches[0];
@@ -124,21 +127,52 @@ router.get('/dashboard', async (req, res) => {
 });
 
 // POST /api/consumer/pause-subscription
-router.post('/pause-subscription', (req, res) => {
+router.post('/pause-subscription', async (req, res) => {
   const { consumerId } = req.body;
-  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
-
-  if (!consumer || !consumer.subscription) {
-    return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
+  let consumer = null;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      consumer = await User.findById(consumerId);
+    } catch (e) {}
+  }
+  if (!consumer) {
+    consumer = users.find(u => u.id === consumerId || u._id === consumerId) || users.find(u => u.role === 'consumer');
   }
 
-  const currentStatus = consumer.subscription.status;
+  if (!consumer) {
+    return res.status(404).json({ success: false, message: 'Consumer account not found.' });
+  }
+
+  if (!consumer.subscription) {
+    consumer.subscription = {
+      id: `sub_${consumer.id || consumer._id || Date.now()}`,
+      planName: 'Pure Fresh A2 Cow Milk',
+      dailyLiters: 2,
+      totalDays: 30,
+      daysRemaining: 30,
+      startDate: new Date().toISOString().split('T')[0],
+      endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
+      status: 'Active',
+      pricePerLiter: 65,
+      totalAmountPaid: 3900,
+      deliveryTimeSlot: '6:30 AM - 7:30 AM'
+    };
+  }
+
+  const currentStatus = consumer.subscription.status || 'Active';
   const newStatus = currentStatus === 'Active' ? 'Paused' : 'Active';
   consumer.subscription.status = newStatus;
 
+  if (consumer.save && mongoose.connection.readyState === 1) {
+    try {
+      consumer.markModified('subscription');
+      await consumer.save();
+    } catch (e) {}
+  }
+
   notifications.unshift({
     id: `notif_${Date.now()}`,
-    userId: consumer.id,
+    userId: consumer.id || (consumer._id ? consumer._id.toString() : 'consumer'),
     title: `Subscription ${newStatus}`,
     message: `Your daily milk subscription has been ${newStatus.toLowerCase()}.`,
     time: 'Just now',
@@ -154,12 +188,20 @@ router.post('/pause-subscription', (req, res) => {
 });
 
 // POST /api/consumer/update-quantity
-router.post('/update-quantity', (req, res) => {
+router.post('/update-quantity', async (req, res) => {
   const { consumerId, dailyLiters } = req.body;
-  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
+  let consumer = null;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      consumer = await User.findById(consumerId);
+    } catch (e) {}
+  }
+  if (!consumer) {
+    consumer = users.find(u => u.id === consumerId || u._id === consumerId) || users.find(u => u.role === 'consumer');
+  }
 
-  if (!consumer || !consumer.subscription) {
-    return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
+  if (!consumer) {
+    return res.status(404).json({ success: false, message: 'Consumer account not found.' });
   }
 
   const qty = parseFloat(dailyLiters);
@@ -167,7 +209,28 @@ router.post('/update-quantity', (req, res) => {
     return res.status(400).json({ success: false, message: 'Invalid daily quantity.' });
   }
 
-  consumer.subscription.dailyLiters = qty;
+  if (!consumer.subscription) {
+    consumer.subscription = {
+      id: `sub_${consumer.id || Date.now()}`,
+      planName: 'Pure Fresh A2 Cow Milk',
+      dailyLiters: qty,
+      totalDays: 30,
+      daysRemaining: 30,
+      status: 'Active',
+      pricePerLiter: 65,
+      totalAmountPaid: 3900,
+      deliveryTimeSlot: '6:30 AM - 7:30 AM'
+    };
+  } else {
+    consumer.subscription.dailyLiters = qty;
+  }
+
+  if (consumer.save && mongoose.connection.readyState === 1) {
+    try {
+      consumer.markModified('subscription');
+      await consumer.save();
+    } catch (e) {}
+  }
 
   return res.json({
     success: true,

@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+const mongoose = require('mongoose');
 const { users } = require('../store');
 const User = require('../models/User');
 
@@ -60,10 +61,10 @@ const verifyToken = async (req, res, next) => {
 
     // Load active user profile from DB or Memory
     let currentUser = null;
-    try {
-      currentUser = await User.findById(decoded.id);
-    } catch (e) {
-      // DB check optional if not connected
+    if (mongoose.connection.readyState === 1) {
+      try {
+        currentUser = await User.findById(decoded.id);
+      } catch (e) {}
     }
 
     if (!currentUser) {

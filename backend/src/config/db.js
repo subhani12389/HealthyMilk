@@ -1,10 +1,15 @@
 const mongoose = require('mongoose');
 
+// Disable command buffering when disconnected to enable instant zero-latency fallback mode
+mongoose.set('bufferCommands', false);
+mongoose.set('bufferTimeoutMS', 1500);
+
 const connectDB = async () => {
   const mongoURI = process.env.MONGODB_URI || process.env.DATABASE_URL || 'mongodb://127.0.0.1:27017/healthymilk';
 
   try {
     const conn = await mongoose.connect(mongoURI, {
+      serverSelectionTimeoutMS: 2000,
       autoIndex: true, // Ensure unique indexes are built
     });
     console.log(`🍃 MongoDB Connected: ${conn.connection.host}/${conn.connection.name}`);

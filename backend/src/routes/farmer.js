@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
 const { users, milkLogs, milkBatches, generateBatchId, transactions, notifications } = require('../store');
 
@@ -14,16 +15,18 @@ router.get('/dashboard', async (req, res) => {
 
   // Fetch batches for this farmer
   let batches = [];
-  try {
-    if (farmer) {
-      batches = await MilkBatch.find({
-        $or: [
-          { farmerId: farmer.id },
-          { farmerId: farmer._id ? farmer._id.toString() : farmer.id }
-        ]
-      }).sort({ collectionDate: -1 }).lean();
-    }
-  } catch (e) {}
+  if (mongoose.connection.readyState === 1) {
+    try {
+      if (farmer) {
+        batches = await MilkBatch.find({
+          $or: [
+            { farmerId: farmer.id },
+            { farmerId: farmer._id ? farmer._id.toString() : farmer.id }
+          ]
+        }).sort({ collectionDate: -1 }).lean();
+      }
+    } catch (e) {}
+  }
 
   if (!batches || batches.length === 0) {
     const fId = farmer ? farmer.id : (farmerId || 'farmer_1');
@@ -173,11 +176,13 @@ router.post('/request-pickup', async (req, res) => {
     ]
   };
 
-  try {
-    const batchDoc = new MilkBatch(batchData);
-    await batchDoc.save();
-  } catch (e) {
-    console.warn('DB Batch save note:', e.message);
+  if (mongoose.connection.readyState === 1) {
+    try {
+      const batchDoc = new MilkBatch(batchData);
+      await batchDoc.save();
+    } catch (e) {
+      console.warn('DB Batch save note:', e.message);
+    }
   }
 
   milkBatches.unshift(batchData);
@@ -227,13 +232,15 @@ router.post('/request-pickup', async (req, res) => {
 router.get('/history', async (req, res) => {
   const { farmerId } = req.query;
   let batches = [];
-  try {
-    if (farmerId) {
-      batches = await MilkBatch.find({ farmerId }).sort({ collectionDate: -1 }).lean();
-    } else {
-      batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
-    }
-  } catch (e) {}
+  if (mongoose.connection.readyState === 1) {
+    try {
+      if (farmerId) {
+        batches = await MilkBatch.find({ farmerId }).sort({ collectionDate: -1 }).lean();
+      } else {
+        batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
+      }
+    } catch (e) {}
+  }
 
   if (!batches || batches.length === 0) {
     batches = farmerId ? milkBatches.filter(b => b.farmerId === farmerId) : milkBatches;
@@ -251,23 +258,46 @@ router.get('/history', async (req, res) => {
 });
 
 // POST /api/farmer/payout
-router.post('/payout', (req, res) => {
+router.post('/payout', async (req, res) => {
   const { farmerId, amount } = req.body;
-  const farmer = users.find(u => u.id === farmerId) || users.find(u => u.role === 'farmer');
+  
+  const payoutAmt = parseFloat(amount);
+  if (isNaN(payoutAmt) || payoutAmt <= 0) {
+    return res.status(400).json({ success: false, message: 'Please enter a valid positive withdrawal amount.' });
+  }
 
-  if (!farmer) return res.status(404).json({ success: false, message: 'Farmer account not found.' });
+  let farmer = null;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      farmer = await User.findById(farmerId);
+    } catch (e) {}
+  }
+  if (!farmer) {
+    farmer = users.find(u => u.id === farmerId || u._id === farmerId) || users.find(u => u.role === 'farmer');
+  }
 
-  const payoutAmt = parseFloat(amount) || farmer.balance;
+  if (!farmer) {
+    farmer = { id: farmerId || 'farmer_1', name: 'Farmer User', role: 'farmer', balance: 0 };
+    users.push(farmer);
+  }
 
-  if (payoutAmt <= 0 || payoutAmt > (farmer.balance || 0)) {
-    return res.status(400).json({ success: false, message: 'Invalid withdrawal amount or insufficient balance.' });
+  if (payoutAmt > (farmer.balance || 0)) {
+    return res.status(400).json({
+      success: false,
+      message: `Insufficient balance. Available: ₹${(farmer.balance || 0).toFixed(2)}, Requested: ₹${payoutAmt.toFixed(2)}`
+    });
   }
 
   farmer.balance = (farmer.balance || 0) - payoutAmt;
+  if (farmer.save && mongoose.connection.readyState === 1) {
+    try {
+      await farmer.save();
+    } catch (e) {}
+  }
 
   const newTx = {
     id: `tx_${Date.now()}`,
-    farmerId: farmer.id,
+    farmerId: farmer.id || (farmer._id ? farmer._id.toString() : farmerId),
     amount: payoutAmt,
     type: 'Bank Withdrawal',
     date: new Date().toLocaleDateString(),
