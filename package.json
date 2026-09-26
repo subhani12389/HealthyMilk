@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "node backend/src/server.js"
+    "start": "node backend/src/server.js",
+    "test": "node backend/tests/run_e2e_audit.js && node backend/tests/run_rbac_edge_cases.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.1",
