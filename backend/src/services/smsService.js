@@ -4,6 +4,7 @@ const http = require('http');
 /**
  * Production Real SMS Delivery Service
  * Supports Twilio, Fast2SMS (India), MSG91, and Custom HTTP SMS Gateways.
+ * Equipped with strict 3500ms network timeout so gateway delays never hang the API.
  */
 const sendSMS = async ({ toPhone, otp }) => {
   const cleanPhone = toPhone.toString().replace(/[^\d]/g, '');
@@ -15,6 +16,8 @@ const sendSMS = async ({ toPhone, otp }) => {
   console.log("Phone:", fullPhone);
   console.log("OTP generated successfully");
   console.log("--------------------------------------------------");
+
+  const GATEWAY_TIMEOUT_MS = 3500;
 
   // 1. Twilio SMS Integration
   const twilioSid = process.env.TWILIO_ACCOUNT_SID;
@@ -44,8 +47,7 @@ const sendSMS = async ({ toPhone, otp }) => {
           let data = '';
           res.on('data', chunk => data += chunk);
           res.on('end', () => {
-            console.log("SMS provider status:", res.statusCode);
-            console.log("SMS provider response:", data);
+            console.log("Twilio SMS status:", res.statusCode);
             if (res.statusCode >= 200 && res.statusCode < 300) {
               resolve({ success: true, provider: 'twilio', data });
             } else {
@@ -54,8 +56,12 @@ const sendSMS = async ({ toPhone, otp }) => {
           });
         });
 
+        req.setTimeout(GATEWAY_TIMEOUT_MS, () => {
+          req.destroy(new Error('SMS Gateway connection timed out (3.5s limit)'));
+        });
+
         req.on('error', (err) => {
-          console.error("SMS provider error:", err.message);
+          console.error("Twilio SMS error:", err.message);
           resolve({ success: false, provider: 'twilio', error: err.message });
         });
 
@@ -94,8 +100,7 @@ const sendSMS = async ({ toPhone, otp }) => {
           let data = '';
           res.on('data', chunk => data += chunk);
           res.on('end', () => {
-            console.log("SMS provider status:", res.statusCode);
-            console.log("SMS provider response:", data);
+            console.log("Fast2SMS status:", res.statusCode);
             if (res.statusCode >= 200 && res.statusCode < 300) {
               resolve({ success: true, provider: 'fast2sms', data });
             } else {
@@ -104,8 +109,12 @@ const sendSMS = async ({ toPhone, otp }) => {
           });
         });
 
+        req.setTimeout(GATEWAY_TIMEOUT_MS, () => {
+          req.destroy(new Error('Fast2SMS Gateway timed out'));
+        });
+
         req.on('error', (err) => {
-          console.error("SMS provider error:", err.message);
+          console.error("Fast2SMS error:", err.message);
           resolve({ success: false, provider: 'fast2sms', error: err.message });
         });
 
@@ -145,8 +154,7 @@ const sendSMS = async ({ toPhone, otp }) => {
           let data = '';
           res.on('data', chunk => data += chunk);
           res.on('end', () => {
-            console.log("SMS provider status:", res.statusCode);
-            console.log("SMS provider response:", data);
+            console.log("MSG91 status:", res.statusCode);
             if (res.statusCode >= 200 && res.statusCode < 300) {
               resolve({ success: true, provider: 'msg91', data });
             } else {
@@ -155,8 +163,12 @@ const sendSMS = async ({ toPhone, otp }) => {
           });
         });
 
+        req.setTimeout(GATEWAY_TIMEOUT_MS, () => {
+          req.destroy(new Error('MSG91 Gateway timed out'));
+        });
+
         req.on('error', (err) => {
-          console.error("SMS provider error:", err.message);
+          console.error("MSG91 error:", err.message);
           resolve({ success: false, provider: 'msg91', error: err.message });
         });
 
@@ -185,20 +197,25 @@ const sendSMS = async ({ toPhone, otp }) => {
       const httpModule = isHttps ? https : http;
 
       const result = await new Promise((resolve) => {
-        httpModule.get(targetUrl, (res) => {
+        const req = httpModule.get(targetUrl, (res) => {
           let data = '';
           res.on('data', chunk => data += chunk);
           res.on('end', () => {
-            console.log("SMS provider status:", res.statusCode);
-            console.log("SMS provider response:", data);
+            console.log("Custom SMS gateway status:", res.statusCode);
             if (res.statusCode >= 200 && res.statusCode < 300) {
               resolve({ success: true, provider: 'custom_gateway', data });
             } else {
               resolve({ success: false, provider: 'custom_gateway', error: data || `HTTP ${res.statusCode}` });
             }
           });
-        }).on('error', (err) => {
-          console.error("SMS provider error:", err.message);
+        });
+
+        req.setTimeout(GATEWAY_TIMEOUT_MS, () => {
+          req.destroy(new Error('Custom SMS Gateway timed out'));
+        });
+
+        req.on('error', (err) => {
+          console.error("Custom SMS Gateway error:", err.message);
           resolve({ success: false, provider: 'custom_gateway', error: err.message });
         });
       });
@@ -210,8 +227,7 @@ const sendSMS = async ({ toPhone, otp }) => {
     }
   }
 
-  // Explicit failure if no SMS provider environment variable is configured
-  console.warn("⚠️ [SMS SERVICE] No SMS API credentials set in backend environment!");
+  // Fallback when no SMS provider credentials are set
   return {
     success: false,
     provider: 'none',

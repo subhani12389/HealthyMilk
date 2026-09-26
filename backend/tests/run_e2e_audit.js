@@ -264,12 +264,13 @@ async function runAudit() {
     });
     assert('Batch rejection flagged by delivery agent', rejectRes.status === 200 && rejectRes.data.success);
     assert('Batch status transitions to Rejected', rejectRes.data.batch.status === 'Rejected');
-    assert('Rejection quarantine logged in audit trail', Boolean(rejectRes.data.batch.rejectionDetails));
+    assert('Rejection quarantine logged in audit trail', Boolean(rejectRes.data.batch.rejection || rejectRes.data.batch.rejectionDetails));
 
     // 5.3 Batch Detail Query by ID
     const batchDetailRes = await request('GET', `/api/batches/${rejBatchId}`);
     assert('Fetch batch detail by Batch ID', batchDetailRes.status === 200 && batchDetailRes.data.batch.batchId === rejBatchId);
-    assert('Batch shows Rejected status and notes', batchDetailRes.data.batch.rejectionDetails.reason === 'Abnormal Fat/SNF');
+    const rejObj = batchDetailRes.data.batch.rejection || batchDetailRes.data.batch.rejectionDetails;
+    assert('Batch shows Rejected status and notes', rejObj && rejObj.reason === 'Abnormal Fat/SNF');
 
     // -------------------------------------------------------------------------
     // 6. CONSUMER WORKFLOW (CATALOG, SUBSCRIPTIONS, ORDERS)

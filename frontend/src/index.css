@@ -466,13 +466,47 @@ input[type="range"] {
   }
 }
 
-/* Animations */
+/* Animations & Skeleton Shimmers */
 @keyframes pulse-subtle {
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.85; transform: scale(1.02); }
 }
 .pulse-anim {
   animation: pulse-subtle 3s infinite ease-in-out;
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, var(--bg-card) 25%, var(--bg-card-hover) 50%, var(--bg-card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-md);
+}
+
+@keyframes slideInToast {
+  0% {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Tactile Active States for Buttons */
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  pointer-events: none;
 }
 
 /* Scrollbars */

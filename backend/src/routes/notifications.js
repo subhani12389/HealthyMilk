@@ -22,10 +22,17 @@ router.post('/mark-read', (req, res) => {
     const notif = notifications.find(n => n.id === notifId);
     if (notif) notif.read = true;
   } else if (userId) {
-    notifications.filter(n => n.userId === userId).forEach(n => n.read = true);
+    notifications.filter(n => n.userId === userId || n.userId === 'all').forEach(n => n.read = true);
   }
 
   return res.json({ success: true, message: 'Notifications marked as read.' });
+});
+
+// PUT /api/notifications/mark-all-read
+router.put('/mark-all-read', (req, res) => {
+  const { userId } = req.body;
+  notifications.filter(n => !userId || n.userId === userId || n.userId === 'all').forEach(n => n.read = true);
+  return res.json({ success: true, message: 'All notifications marked as read.' });
 });
 
 module.exports = router;

@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
 import { 
   Milk, ArrowRight, ShieldCheck, CheckCircle2, Phone, 
-  AlertCircle, ArrowLeft, KeyRound, RotateCcw, Sparkles, User, Truck
+  AlertCircle, ArrowLeft, RotateCcw, Loader2
 } from 'lucide-react';
 
 export default function AuthPage() {
   const { loginUser } = useAuth();
+  const { showToast } = useToast();
   
   // Auth Steps: 1 = Phone Input, 2 = OTP Verification, 3 = Account Type Selection (New Users)
   const [step, setStep] = useState(1);
@@ -17,7 +19,6 @@ export default function AuthPage() {
 
   // Step 2: OTP State (Array of 6 digits)
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
-  const [sentOtpPreview, setSentOtpPreview] = useState('');
   const [resendTimer, setResendTimer] = useState(0);
   const otpInputRefs = [useRef(null), useRef(null), useRef(null), useRef(null), useRef(null), useRef(null)];
 
@@ -51,17 +52,19 @@ export default function AuthPage() {
 
   // Step 1: Send OTP Submit
   const handleSendOTP = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    if (loading) return; // Prevent double-clicks
+
     setErrorMsg('');
     setSuccessMsg('');
 
     const clean = mobileNumber.replace(/[^\d]/g, '');
     if (!clean || clean.length !== 10) {
       setErrorMsg('Please enter a valid 10-digit Indian mobile number.');
+      showToast('Please enter a valid 10-digit mobile number.', 'warning');
       return;
     }
 
-    console.log("Sending OTP to:", clean);
     setLoading(true);
 
     try {
@@ -74,24 +77,28 @@ export default function AuthPage() {
         })
       });
 
-      if (data.success) {
+      if (data && data.success) {
         setMaskedPhone(data.maskedPhone || `+91 XXXXXXX${clean.slice(7)}`);
         setIsExistingUser(Boolean(data.isExistingUser));
-        setSuccessMsg(data.message || `We've sent a verification code to +91 XXXXXXX${clean.slice(7)}`);
+        setSuccessMsg(data.message || `Verification code sent to +91 XXXXXXX${clean.slice(7)}`);
+        showToast(`Verification code sent to ${data.maskedPhone || clean}`, 'success');
         setStep(2);
         setResendTimer(30);
 
-        // Focus first OTP box
+        // Auto-focus first OTP box
         setTimeout(() => {
           if (otpInputRefs[0]?.current) {
             otpInputRefs[0].current.focus();
           }
-        }, 100);
+        }, 80);
       } else {
-        setErrorMsg(data.message || 'Failed to send OTP. Please check your phone number.');
+        const msg = data?.message || 'Failed to send OTP. Please check your phone number.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
       }
     } catch (err) {
-      setErrorMsg('Server connection error. Please verify backend server is running.');
+      setErrorMsg('Unable to connect to server. Please try again.');
+      showToast('Unable to connect to server.', 'error');
     } finally {
       setLoading(false);
     }
@@ -136,7 +143,7 @@ export default function AuthPage() {
 
   // Resend OTP Handler
   const handleResendOTP = async () => {
-    if (resendTimer > 0) return;
+    if (resendTimer > 0 || loading) return;
     setErrorMsg('');
     setSuccessMsg('');
     setLoading(true);
@@ -151,18 +158,18 @@ export default function AuthPage() {
         })
       });
 
-      if (data.success) {
-        setSentOtpPreview(data.otp || '');
-        if (data.otp) {
-          setOtpDigits(data.otp.toString().split('').slice(0, 6));
-        }
+      if (data && data.success) {
         setSuccessMsg(`New OTP sent to ${maskedPhone}`);
+        showToast('New verification code sent successfully.', 'success');
         setResendTimer(30);
       } else {
-        setErrorMsg(data.message || 'Failed to resend OTP.');
+        const msg = data?.message || 'Failed to resend OTP.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
       }
     } catch (err) {
       setErrorMsg('Server connection error.');
+      showToast('Server connection error.', 'error');
     } finally {
       setLoading(false);
     }
@@ -170,13 +177,16 @@ export default function AuthPage() {
 
   // Step 2: Verify OTP Submit
   const handleVerifyOTP = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    if (loading) return; // Prevent double-clicks
+
     setErrorMsg('');
     setSuccessMsg('');
 
     const enteredOtp = otpDigits.join('');
     if (enteredOtp.length !== 6) {
       setErrorMsg('Please enter the full 6-digit OTP verification code.');
+      showToast('Please enter the full 6-digit verification code.', 'warning');
       return;
     }
 
@@ -192,24 +202,27 @@ export default function AuthPage() {
         })
       });
 
-      if (data.success) {
-        // EXISTING USER FLOW: Auto-login & redirect to role dashboard
+      if (data && data.success) {
         if (data.isExistingUser && data.user && data.token) {
           setSuccessMsg(`Welcome back, ${data.user.name}!`);
+          showToast(`Welcome back, ${data.user.name}!`, 'success');
           setTimeout(() => {
             loginUser(data.user, data.token);
-          }, 300);
+          }, 150);
         } else {
-          // NEW USER FLOW: Phone verified -> Advance to Step 3 Account Type selection
           setVerificationToken(data.verificationToken || '');
-          setSuccessMsg('Phone number verified! Please choose your account type.');
+          setSuccessMsg('Phone verified! Please choose your account type.');
+          showToast('Phone verified successfully!', 'success');
           setStep(3);
         }
       } else {
-        setErrorMsg(data.message || 'Invalid OTP. Please try again.');
+        const msg = data?.message || 'Invalid OTP. Please check the code and try again.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
       }
     } catch (err) {
       setErrorMsg('Server connection error verifying OTP.');
+      showToast('Error verifying OTP.', 'error');
     } finally {
       setLoading(false);
     }
@@ -217,7 +230,9 @@ export default function AuthPage() {
 
   // Step 3: Account Creation Submit (New Users)
   const handleCreateAccount = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    if (loading) return;
+
     setErrorMsg('');
     setSuccessMsg('');
     setLoading(true);
@@ -233,16 +248,20 @@ export default function AuthPage() {
         })
       });
 
-      if (data.success && data.user && data.token) {
+      if (data && data.success && data.user && data.token) {
         setSuccessMsg(`Account created successfully! Welcome to HealthyMilk.`);
+        showToast('Account created successfully!', 'success');
         setTimeout(() => {
           loginUser(data.user, data.token);
-        }, 300);
+        }, 150);
       } else {
-        setErrorMsg(data.message || 'Failed to create account. Please try again.');
+        const msg = data?.message || 'Failed to create account. Please try again.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
       }
     } catch (err) {
       setErrorMsg('Server error creating account.');
+      showToast('Server error creating account.', 'error');
     } finally {
       setLoading(false);
     }
@@ -293,13 +312,13 @@ export default function AuthPage() {
             Healthy<span style={{ color: 'var(--accent-emerald)' }}>Milk</span>
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '4px' }}>
-            {step === 1 && 'Welcome to HealthyMilk – Enter your phone number'}
-            {step === 2 && 'Verify Phone Number'}
+            {step === 1 && 'Pure Dairy Ecosystem – Enter phone number to continue'}
+            {step === 2 && 'Verify Mobile Number'}
             {step === 3 && 'Choose Your Account Type'}
           </p>
         </div>
 
-        {/* Dynamic Alerts */}
+        {/* Inline Alerts */}
         {errorMsg && (
           <div style={{
             background: 'var(--accent-rose-light)',
@@ -345,7 +364,6 @@ export default function AuthPage() {
                 Mobile Phone Number
               </label>
               <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.4rem' }}>
-                {/* Country Code Badge */}
                 <div style={{
                   padding: '0.75rem clamp(0.5rem, 2vw, 0.85rem)',
                   borderRadius: '12px',
@@ -362,11 +380,13 @@ export default function AuthPage() {
                   <span>🇮🇳</span> +91
                 </div>
 
-                {/* 10-Digit Mobile Input */}
                 <div style={{ position: 'relative', flex: 1 }}>
                   <Phone size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
                   <input
                     type="tel"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="tel-national"
                     required
                     maxLength={10}
                     placeholder="9876543210"
@@ -388,7 +408,7 @@ export default function AuthPage() {
                 </div>
               </div>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.4rem' }}>
-                Enter your 10-digit Indian mobile number to receive verification OTP.
+                Enter your 10-digit mobile number to receive instant SMS verification.
               </span>
             </div>
 
@@ -402,19 +422,24 @@ export default function AuthPage() {
                 padding: '0.85rem',
                 fontSize: '0.92rem',
                 fontWeight: 700,
-                borderRadius: '12px',
-                opacity: (loading || mobileNumber.length !== 10) ? 0.6 : 1,
-                cursor: (loading || mobileNumber.length !== 10) ? 'not-allowed' : 'pointer'
+                borderRadius: '12px'
               }}
             >
-              {loading ? 'Sending Verification OTP...' : 'Continue'}
-              <ArrowRight size={18} />
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="pulse-anim" /> Sending OTP...
+                </>
+              ) : (
+                <>
+                  Continue <ArrowRight size={18} />
+                </>
+              )}
             </button>
           </form>
         )}
 
         {/* ==================================================== */}
-        {/* STEP 2: Verify Phone Number (6-Digit OTP Screen) */}
+        {/* STEP 2: Verify Phone Number (6-Digit Segmented OTP) */}
         {/* ==================================================== */}
         {step === 2 && (
           <form onSubmit={handleVerifyOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
@@ -426,20 +451,20 @@ export default function AuthPage() {
               textAlign: 'center'
             }}>
               <div style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
-                📱 Mobile OTP Verification Code
+                📱 Mobile OTP Verification
               </div>
               <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
                 {maskedPhone}
               </div>
               <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                We've sent a 6-digit verification code to your phone.
+                Enter the 6-digit verification code sent to your mobile phone.
               </p>
             </div>
 
-            {/* 6 Individual Auto-Focusing OTP Boxes */}
+            {/* 6 Auto-Advancing Segmented Inputs */}
             <div>
               <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', textAlign: 'center' }}>
-                Enter 6-Digit Verification Code
+                Enter 6-Digit Code
               </label>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 'clamp(3px, 1.5vw, 8px)' }}>
                 {otpDigits.map((digit, idx) => (
@@ -447,6 +472,9 @@ export default function AuthPage() {
                     key={idx}
                     ref={otpInputRefs[idx]}
                     type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="one-time-code"
                     maxLength={1}
                     value={digit}
                     onChange={(e) => handleOtpBoxChange(idx, e.target.value)}
@@ -471,14 +499,14 @@ export default function AuthPage() {
               </div>
             </div>
 
-            {/* Action buttons & Timer */}
+            {/* Back & Resend Actions */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem' }}>
               <button
                 type="button"
                 onClick={() => { setStep(1); setErrorMsg(''); setSuccessMsg(''); }}
                 style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}
               >
-                <ArrowLeft size={15} /> Back
+                <ArrowLeft size={15} /> Change Number
               </button>
 
               <button
@@ -496,7 +524,7 @@ export default function AuthPage() {
                   cursor: resendTimer > 0 ? 'not-allowed' : 'pointer'
                 }}
               >
-                <RotateCcw size={14} /> {resendTimer > 0 ? `Resend OTP in ${resendTimer}s` : 'Resend OTP'}
+                <RotateCcw size={14} /> {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend Code'}
               </button>
             </div>
 
@@ -510,19 +538,24 @@ export default function AuthPage() {
                 padding: '0.9rem',
                 fontSize: '0.95rem',
                 fontWeight: 700,
-                borderRadius: '12px',
-                opacity: (loading || otpDigits.join('').length !== 6) ? 0.6 : 1,
-                cursor: (loading || otpDigits.join('').length !== 6) ? 'not-allowed' : 'pointer'
+                borderRadius: '12px'
               }}
             >
-              {loading ? 'Verifying OTP...' : 'Verify OTP'}
-              <ShieldCheck size={18} />
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="pulse-anim" /> Verifying...
+                </>
+              ) : (
+                <>
+                  Verify & Continue <ShieldCheck size={18} />
+                </>
+              )}
             </button>
           </form>
         )}
 
         {/* ==================================================== */}
-        {/* STEP 3: Choose Account Type (New User Flow Only) */}
+        {/* STEP 3: Account Type Selection (New Users) */}
         {/* ==================================================== */}
         {step === 3 && (
           <form onSubmit={handleCreateAccount} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -531,13 +564,12 @@ export default function AuthPage() {
                 Choose Your Account Type
               </h3>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                Select how you will use HealthyMilk. This can't be changed later.
+                Select your primary role in the HealthyMilk dairy network.
               </p>
             </div>
 
-            {/* 3 Account Type Cards */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {/* Card 1: Farmer */}
+              {/* Farmer */}
               <div
                 onClick={() => setSelectedRole('farmer')}
                 style={{
@@ -549,7 +581,7 @@ export default function AuthPage() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.85rem',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.15s ease'
                 }}
               >
                 <div style={{
@@ -567,16 +599,16 @@ export default function AuthPage() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                    Farmer
+                    Dairy Farmer
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Sell and manage your milk supply.
+                    Supply raw milk, track quality checks, and receive fast payouts.
                   </div>
                 </div>
                 {selectedRole === 'farmer' && <CheckCircle2 color="var(--accent-emerald)" size={20} />}
               </div>
 
-              {/* Card 2: Consumer */}
+              {/* Consumer */}
               <div
                 onClick={() => setSelectedRole('consumer')}
                 style={{
@@ -588,7 +620,7 @@ export default function AuthPage() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.85rem',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.15s ease'
                 }}
               >
                 <div style={{
@@ -606,16 +638,16 @@ export default function AuthPage() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                    Consumer
+                    Milk Consumer
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Order fresh milk and manage deliveries.
+                    Subscribe to fresh A2 milk, pause/resume anytime, verify batch traceability.
                   </div>
                 </div>
                 {selectedRole === 'consumer' && <CheckCircle2 color="var(--accent-blue)" size={20} />}
               </div>
 
-              {/* Card 3: Delivery Agent */}
+              {/* Delivery Agent */}
               <div
                 onClick={() => setSelectedRole('delivery_agent')}
                 style={{
@@ -627,7 +659,7 @@ export default function AuthPage() {
                   display: 'flex',
                   alignItems: 'center',
                   gap: '0.85rem',
-                  transition: 'all 0.2s ease'
+                  transition: 'all 0.15s ease'
                 }}
               >
                 <div style={{
@@ -648,7 +680,7 @@ export default function AuthPage() {
                     Delivery Agent
                   </div>
                   <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Manage assigned deliveries and orders.
+                    Perform lab-grade field tests, collect batches, and deliver fresh milk.
                   </div>
                 </div>
                 {selectedRole === 'delivery_agent' && <CheckCircle2 color="var(--accent-amber)" size={20} />}
@@ -669,8 +701,15 @@ export default function AuthPage() {
                 marginTop: '0.5rem'
               }}
             >
-              {loading ? 'Creating Account...' : 'Create Account & Continue'}
-              <ArrowRight size={18} />
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="pulse-anim" /> Creating Account...
+                </>
+              ) : (
+                <>
+                  Complete Setup & Open Dashboard <ArrowRight size={18} />
+                </>
+              )}
             </button>
           </form>
         )}

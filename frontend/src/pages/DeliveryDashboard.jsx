@@ -1,22 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
+import { SkeletonBanner, SkeletonStatGrid, SkeletonCard } from '../components/Skeleton';
+import Pagination from '../components/Pagination';
+import EmptyState from '../components/EmptyState';
 import { 
   Truck, MapPin, CheckCircle2, Clock, Milk, User, 
   RefreshCw, AlertCircle, ShieldCheck, DollarSign, Calculator,
   Wallet, ArrowUpRight, Search, Settings, AlertTriangle, 
-  Camera, Image as ImageIcon, X, Thermometer, Award 
+  Camera, Image as ImageIcon, X, Thermometer, Award, Loader2 
 } from 'lucide-react';
 
 export default function DeliveryDashboard() {
   const { user, activeTab, updateUserBalance } = useAuth();
+  const { showToast } = useToast();
+
   const [dashboardData, setDashboardData] = useState(null);
   const [agentProfile, setAgentProfile] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [msg, setMsg] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
+
+  // Pagination States
+  const [pickupPage, setPickupPage] = useState(1);
+  const [batchPage, setBatchPage] = useState(1);
+  const [txPage, setTxPage] = useState(1);
+  const PAGE_SIZE = 6;
 
   // Selected Pickup for Quality Test Modal
   const [activePickup, setActivePickup] = useState(null);
@@ -37,10 +47,10 @@ export default function DeliveryDashboard() {
   // Agent Payout Modal
   const [showPayoutModal, setShowPayoutModal] = useState(false);
   const [payoutAmount, setPayoutAmount] = useState('');
+  const [submittingPayout, setSubmittingPayout] = useState(false);
   const [payoutMsg, setPayoutMsg] = useState('');
 
   const fetchAgentDashboard = async () => {
-    setLoading(true);
     try {
       const data = await apiFetch(`/api/delivery/dashboard?agentId=${user?.id}`);
       if (data && data.success) {
@@ -77,11 +87,10 @@ export default function DeliveryDashboard() {
 
   // Quality Test & Credit Farmer & Agent Money
   const handleTestAndCollect = async (e) => {
-    e.preventDefault();
-    if (!activePickup) return;
+    if (e) e.preventDefault();
+    if (!activePickup || submittingTest) return;
+
     setSubmittingTest(true);
-    setMsg('');
-    setErrorMsg('');
 
     try {
       const data = await apiFetch('/api/delivery/test-and-collect', {
@@ -101,17 +110,17 @@ export default function DeliveryDashboard() {
       });
 
       if (data && data.success) {
-        setMsg(data.message);
+        showToast(`Batch ${activePickup.batchId} accepted & ₹${data.creditedAmount || 0} credited to farmer!`, 'success');
         setActivePickup(null);
         if (data.updatedAgentBalance !== undefined) {
           updateUserBalance(data.updatedAgentBalance);
         }
         fetchAgentDashboard();
       } else {
-        setErrorMsg(data?.message || 'Quality verification failed');
+        showToast(data?.message || 'Quality verification failed.', 'error');
       }
     } catch (err) {
-      setErrorMsg('Server error processing quality verification.');
+      showToast('Server error processing quality verification.', 'error');
     } finally {
       setSubmittingTest(false);
     }
@@ -119,11 +128,10 @@ export default function DeliveryDashboard() {
 
   // Reject Batch Handler
   const handleRejectBatch = async (e) => {
-    e.preventDefault();
-    if (!rejectingPickup) return;
+    if (e) e.preventDefault();
+    if (!rejectingPickup || submittingRejection) return;
+
     setSubmittingRejection(true);
-    setMsg('');
-    setErrorMsg('');
 
     try {
       const data = await apiFetch('/api/delivery/reject-batch', {
@@ -140,16 +148,16 @@ export default function DeliveryDashboard() {
       });
 
       if (data && data.success) {
-        setMsg(data.message);
+        showToast(`Batch ${rejectingPickup.batchId} rejected & flagged for admin review.`, 'warning');
         setRejectingPickup(null);
         setRejectionRemarks('');
         setEvidencePhoto('');
         fetchAgentDashboard();
       } else {
-        setErrorMsg(data?.message || 'Batch rejection failed');
+        showToast(data?.message || 'Batch rejection failed.', 'error');
       }
     } catch (err) {
-      setErrorMsg('Server error processing batch rejection.');
+      showToast('Server error processing batch rejection.', 'error');
     } finally {
       setSubmittingRejection(false);
     }
@@ -167,69 +175,75 @@ export default function DeliveryDashboard() {
     }
   };
 
-  const handleUpdateStatus = async (taskId, newStatus, type) => {
-    setMsg('');
-    try {
-      const data = await apiFetch('/api/delivery/update-status', {
-        method: 'POST',
-        body: JSON.stringify({ taskId, status: newStatus, type, agentId: user?.id })
-      });
-      if (data && data.success) {
-        setMsg(`Status updated to ${newStatus}`);
-        fetchAgentDashboard();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  // Payout Request Handler
+  const handlePayoutRequest = async (e) => {
+    if (e) e.preventDefault();
+    if (submittingPayout) return;
 
-  // Agent Bank Payout Request
-  const handleAgentPayout = async (e) => {
-    e.preventDefault();
+    setSubmittingPayout(true);
     setPayoutMsg('');
+
     try {
       const data = await apiFetch('/api/delivery/payout', {
         method: 'POST',
         body: JSON.stringify({
           agentId: user?.id,
-          amount: payoutAmount
+          amount: Number(payoutAmount)
         })
       });
+
       if (data && data.success) {
         setPayoutMsg(data.message);
+        showToast('Commission withdrawal processed successfully!', 'success');
         if (data.remainingBalance !== undefined) {
           updateUserBalance(data.remainingBalance);
         }
         setTimeout(() => {
           setShowPayoutModal(false);
+          setPayoutAmount('');
           setPayoutMsg('');
           fetchAgentDashboard();
-        }, 1200);
+        }, 1000);
       } else {
-        setPayoutMsg(data?.message || 'Payout failed');
+        const err = data?.message || 'Payout failed.';
+        setPayoutMsg(err);
+        showToast(err, 'error');
       }
     } catch (err) {
-      console.error(err);
+      showToast('Error requesting payout.', 'error');
+    } finally {
+      setSubmittingPayout(false);
     }
   };
 
   if (loading && !dashboardData) {
     return (
-      <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-        <RefreshCw size={24} className="pulse-anim" style={{ margin: '0 auto 1rem' }} />
-        <p>Loading Delivery Agent Portal...</p>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+        <SkeletonBanner />
+        <SkeletonStatGrid count={4} />
+        <div className="grid-responsive-2">
+          <SkeletonCard height="340px" />
+          <SkeletonCard height="340px" />
+        </div>
       </div>
     );
   }
 
-  const currentBalance = user?.balance !== undefined ? user.balance : (agentProfile?.balance || 0);
+  const assignedPickups = dashboardData?.assignedPickups || [];
+  const assignedDeliveries = dashboardData?.assignedDeliveries || [];
+  const agentBal = agentProfile?.balance !== undefined ? agentProfile.balance : (user?.balance || 0);
+
+  // Paginated Slices
+  const paginatedPickups = assignedPickups.slice((pickupPage - 1) * PAGE_SIZE, pickupPage * PAGE_SIZE);
+  const paginatedBatches = batches.slice((batchPage - 1) * PAGE_SIZE, batchPage * PAGE_SIZE);
+  const paginatedTx = transactions.slice((txPage - 1) * PAGE_SIZE, txPage * PAGE_SIZE);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1150px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
       
-      {/* Top Banner with Available Money */}
+      {/* Top Banner */}
       <div style={{
-        background: 'linear-gradient(135deg, rgba(217, 119, 6, 0.15) 0%, rgba(245, 158, 11, 0.05) 100%)',
+        background: 'linear-gradient(135deg, rgba(217, 119, 6, 0.12) 0%, rgba(16, 185, 129, 0.08) 100%)',
         border: '1px solid var(--accent-amber)',
         borderRadius: '20px',
         padding: 'clamp(1rem, 2.5vw, 1.5rem)',
@@ -241,405 +255,294 @@ export default function DeliveryDashboard() {
       }}>
         <div style={{ minWidth: '220px', flex: '1 1 240px' }}>
           <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-amber)', textTransform: 'uppercase' }}>
-            🚚 Certified Delivery Agent Portal
+            🚚 Logistics & Field Testing Agent
           </div>
           <h2 style={{ fontSize: 'clamp(1.25rem, 3vw, 1.5rem)', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
-            {agentProfile?.name || user?.name || 'Delivery Agent'}
+            {agentProfile?.name || user?.name || 'Delivery Partner'}
           </h2>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px' }}>
             Vehicle: {agentProfile?.vehicleNo || 'GJ-07-MK-4421'} • Route: {agentProfile?.assignedArea || 'Sector 14 & Green Valley'}
           </p>
         </div>
-
-        {/* Current Available Money */}
-        <div style={{
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border-color)',
-          borderRadius: '16px',
-          padding: '0.75rem clamp(0.75rem, 2vw, 1.25rem)',
-          textAlign: 'left',
-          minWidth: '160px',
-          boxShadow: 'var(--shadow-sm)'
-        }}>
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 600 }}>COMMISSION BALANCE</div>
-          <div style={{ fontSize: 'clamp(1.35rem, 4vw, 1.6rem)', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '2px' }}>
-            ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-            ₹50 earned per verified collection & delivery
+        <div style={{ textAlign: 'left', minWidth: '160px' }}>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>Commission Balance</div>
+          <div style={{ fontSize: 'clamp(1.35rem, 4vw, 1.6rem)', fontWeight: 800, color: 'var(--accent-amber)', marginTop: '2px' }}>
+            ₹{Number(agentBal).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </div>
         </div>
       </div>
 
-      {msg && (
-        <div style={{ background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', padding: '0.75rem 1rem', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <CheckCircle2 size={18} /> {msg}
-        </div>
-      )}
-
-      {errorMsg && (
-        <div style={{ background: 'var(--accent-rose-light)', color: 'var(--accent-rose)', padding: '0.75rem 1rem', borderRadius: '12px', fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <AlertTriangle size={18} /> {errorMsg}
-        </div>
-      )}
-
-      {/* TAB 1: DISPATCH & PICKUPS QUEUE */}
-      {(!activeTab || activeTab === 'status') && (
-        <div className="grid-responsive-2-unequal">
-          
-          {/* Farmer Milk Pickups with Batch ID & Testing/Rejection Actions */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Milk size={22} color="var(--accent-emerald)" />
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Farmer Milk Batch Collections</h3>
-              </div>
-              <span className="badge badge-info">{dashboardData?.farmerPickups?.length || 0} Batches</span>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {dashboardData?.farmerPickups?.map(pickup => {
-                const isRejected = pickup.status === 'Rejected' || pickup.status?.includes('Rejected');
-                const isAccepted = pickup.status === 'Accepted' || pickup.status?.includes('Tested');
-                return (
-                  <div key={pickup.id || pickup.batchId} style={{
-                    background: 'var(--bg-primary)',
-                    border: isRejected ? '1px solid var(--accent-rose)' : '1px solid var(--border-color)',
-                    borderRadius: '14px',
-                    padding: '1.1rem'
-                  }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div>
-                        {/* Batch ID Tag */}
-                        <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
-                          Batch #{pickup.batchId || pickup.id}
-                        </div>
-                        <div style={{ fontWeight: 800, fontSize: '1.05rem', marginTop: '2px' }}>{pickup.farmerName}</div>
-                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                          Collection Volume: <strong style={{ color: 'var(--text-main)' }}>{pickup.liters} Liters</strong>
-                        </div>
-                        {pickup.notes && (
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic', marginTop: '2px' }}>
-                            "{pickup.notes}"
-                          </div>
-                        )}
-                      </div>
-                      <span className={`badge ${isRejected ? 'badge-danger' : isAccepted ? 'badge-success' : 'badge-warning'}`}>
-                        {pickup.status}
-                      </span>
-                    </div>
-
-                    {/* Tested Parameters Snapshot */}
-                    {pickup.qualityTest && (
-                      <div style={{
-                        marginTop: '0.75rem',
-                        background: isRejected ? 'var(--accent-rose-light)' : 'var(--accent-emerald-light)',
-                        color: isRejected ? 'var(--accent-rose)' : 'var(--accent-emerald)',
-                        padding: '0.5rem 0.75rem',
-                        borderRadius: '8px',
-                        fontSize: '0.78rem',
-                        fontWeight: 700,
-                        display: 'flex',
-                        justifyContent: 'space-between'
-                      }}>
-                        <span>Fat: {pickup.qualityTest.fatPercentage}% • SNF: {pickup.qualityTest.snfPercentage}% • {pickup.qualityTest.temperature || 4.0}°C</span>
-                        <span>{isRejected ? 'Quarantined' : `Farmer Payout: ₹${pickup.qualityTest.totalPrice}`}</span>
-                      </div>
-                    )}
-
-                    {/* Rejection Cause if Rejected */}
-                    {isRejected && pickup.rejection && (
-                      <div style={{ marginTop: '0.65rem', background: 'var(--bg-card)', padding: '0.5rem 0.75rem', borderRadius: '8px', border: '1px solid var(--accent-rose)', fontSize: '0.78rem' }}>
-                        <span style={{ fontWeight: 800, color: 'var(--accent-rose)' }}>Rejection Reason: </span>
-                        <span>{pickup.rejection.reason}</span>
-                        {pickup.rejection.remarks && <div style={{ fontStyle: 'italic', color: 'var(--text-muted)', marginTop: '2px' }}>"{pickup.rejection.remarks}"</div>}
-                      </div>
-                    )}
-
-                    {/* Action Buttons: Inspect or Reject */}
-                    <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                      {!isAccepted && !isRejected ? (
-                        <>
-                          <button
-                            onClick={() => {
-                              setActivePickup(pickup);
-                              setTestedFat('4.5');
-                              setTestedSNF('8.8');
-                              setLactometer('29.5');
-                              setTemperature('4.0');
-                            }}
-                            className="btn-primary"
-                            style={{ fontSize: '0.82rem', padding: '0.55rem 0.85rem', flex: 1, justifyContent: 'center' }}
-                          >
-                            <Calculator size={16} /> Test Quality & Accept
-                          </button>
-
-                          <button
-                            onClick={() => {
-                              setRejectingPickup(pickup);
-                              setRejectionReason('Abnormal Fat/SNF');
-                              setRejectionRemarks('');
-                              setEvidencePhoto('');
-                            }}
-                            className="btn-secondary"
-                            style={{ fontSize: '0.82rem', padding: '0.55rem 0.85rem', color: 'var(--accent-rose)', borderColor: 'var(--accent-rose)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                          >
-                            <AlertTriangle size={15} /> Reject
-                          </button>
-                        </>
-                      ) : (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
-                          <span style={{ fontSize: '0.78rem', color: isRejected ? 'var(--accent-rose)' : 'var(--accent-emerald)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            {isRejected ? <AlertTriangle size={15} /> : <CheckCircle2 size={16} />}
-                            {isRejected ? 'Batch Quarantined' : 'Verified & Farmer Credited'}
-                          </span>
-                          {isAccepted && pickup.status !== 'In Transit' && pickup.status !== 'Delivered' && (
-                            <button
-                              onClick={() => handleUpdateStatus(pickup.batchId || pickup.id, 'In Transit', 'farmer_pickup')}
-                              className="btn-secondary"
-                              style={{ fontSize: '0.75rem', padding: '0.35rem 0.65rem' }}
-                            >
-                              Dispatch to Cold-Chain
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+      {/* Quick Summary Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+        <div className="card" style={{ padding: '1.1rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Assigned Pickups</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+            {assignedPickups.length}
           </div>
-
-          {/* Consumer Deliveries */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Truck size={22} color="var(--accent-blue)" />
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Consumer Deliveries</h3>
-              </div>
-              <span className="badge badge-info">{dashboardData?.consumerDeliveries?.length || 0} Dropoffs</span>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              {dashboardData?.consumerDeliveries?.map(task => (
-                <div key={task.id} style={{
-                  background: 'var(--bg-primary)',
-                  border: '1px solid var(--border-color)',
-                  borderRadius: '14px',
-                  padding: '1.1rem'
-                }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: '1rem' }}>{task.consumerName}</div>
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{task.address}</div>
-                      <div style={{ fontSize: '0.8rem', fontWeight: 700, marginTop: '4px', color: 'var(--accent-blue)' }}>
-                        {task.liters} L • {task.milkType}
-                      </div>
-                    </div>
-                    <span className={`badge ${task.status === 'Delivered' ? 'badge-success' : 'badge-warning'}`}>
-                      {task.status}
-                    </span>
-                  </div>
-
-                  <div style={{ marginTop: '0.85rem', display: 'flex', gap: '0.5rem' }}>
-                    {task.status !== 'Delivered' && (
-                      <button
-                        onClick={() => handleUpdateStatus(task.id, 'Delivered', 'consumer_delivery')}
-                        className="btn-primary"
-                        style={{ fontSize: '0.78rem', padding: '0.45rem 0.85rem', width: '100%', justifyContent: 'center' }}
-                      >
-                        Mark Delivered & Earn ₹50 Commission
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
         </div>
-      )}
+        <div className="card" style={{ padding: '1.1rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Doorstep Deliveries</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-blue)', marginTop: '4px' }}>
+            {assignedDeliveries.length}
+          </div>
+        </div>
+        <div className="card" style={{ padding: '1.1rem' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Tested Batches</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '4px' }}>
+            {batches.length}
+          </div>
+        </div>
+      </div>
 
-      {/* TAB 2: AGENT BALANCE & PAYOUTS */}
-      {activeTab === 'balance' && (
+      {/* TAB 1: PICKUPS & DELIVERIES */}
+      {(!activeTab || activeTab === 'status' || activeTab === 'pickups') && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           
-          <div className="grid-responsive-3">
-            
-            <div className="card" style={{ background: 'linear-gradient(135deg, #D97706 0%, #B45309 100%)', color: '#FFFFFF' }}>
-              <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>Current Available Earnings</div>
-              <div style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.25rem)', fontWeight: 800, margin: '0.4rem 0' }}>
-                ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          {/* Pending Farmer Collections Section */}
+          <div className="card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Pending Milk Pickup Collections</h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Inspect quality, test Fat/SNF %, and credit farmer payout</p>
+              </div>
+              <button onClick={fetchAgentDashboard} className="btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                <RefreshCw size={14} /> Refresh
+              </button>
+            </div>
+
+            {assignedPickups.length === 0 ? (
+              <EmptyState
+                title="No pending pickups"
+                description="All farmer milk collections have been completed."
+              />
+            ) : (
+              <>
+                <div className="table-responsive">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Batch ID</th>
+                        <th>Farmer / Dairy</th>
+                        <th>Volume</th>
+                        <th>Collection Time</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedPickups.map((pickup) => (
+                        <tr key={pickup.id || pickup.batchId}>
+                          <td><strong style={{ fontFamily: 'monospace', color: 'var(--accent-amber)' }}>{pickup.batchId}</strong></td>
+                          <td>
+                            <strong>{pickup.farmerName}</strong>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{pickup.farmName} • {pickup.farmLocation}</div>
+                          </td>
+                          <td><strong>{pickup.liters} Liters</strong></td>
+                          <td>{new Date(pickup.collectionDate || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                          <td>
+                            <span className={`badge ${pickup.status === 'Accepted' ? 'badge-success' : pickup.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}`}>
+                              {pickup.status}
+                            </span>
+                          </td>
+                          <td>
+                            {pickup.status === 'Collected' || pickup.status === 'Quality Checked' ? (
+                              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                <button
+                                  onClick={() => {
+                                    setActivePickup(pickup);
+                                    setTestedFat('4.5');
+                                    setTestedSNF('8.8');
+                                    setLactometer('29.5');
+                                  }}
+                                  className="btn-primary"
+                                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                                >
+                                  <ShieldCheck size={14} /> Test & Accept
+                                </button>
+                                <button
+                                  onClick={() => setRejectingPickup(pickup)}
+                                  className="btn-secondary"
+                                  style={{ padding: '6px 10px', fontSize: '0.8rem', color: 'var(--accent-rose)', borderColor: 'var(--accent-rose)' }}
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Completed</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <Pagination
+                  currentPage={pickupPage}
+                  totalItems={assignedPickups.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setPickupPage}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 2: BATCH HISTORY */}
+      {activeTab === 'batches' && (
+        <div className="card">
+          <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.25rem' }}>All Collected & Tested Batches</h3>
+          {batches.length === 0 ? (
+            <EmptyState
+              title="No batches recorded yet"
+              description="Tested batches will appear here in chronological order."
+            />
+          ) : (
+            <>
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Batch ID</th>
+                      <th>Date</th>
+                      <th>Farmer</th>
+                      <th>Volume</th>
+                      <th>Quality Score</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedBatches.map((b) => (
+                      <tr key={b.batchId || b.id}>
+                        <td><strong style={{ fontFamily: 'monospace', color: 'var(--accent-amber)' }}>{b.batchId}</strong></td>
+                        <td>{new Date(b.collectionDate || Date.now()).toLocaleDateString()}</td>
+                        <td>{b.farmerName}</td>
+                        <td><strong>{b.liters} L</strong></td>
+                        <td>
+                          {b.qualityTest ? (
+                            <span className="badge badge-success">{b.qualityTest.qualityScore}/100</span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>-</span>
+                          )}
+                        </td>
+                        <td>
+                          <span className={`badge ${b.status === 'Accepted' || b.status === 'Delivered' ? 'badge-success' : b.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}`}>
+                            {b.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <Pagination
+                currentPage={batchPage}
+                totalItems={batches.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setBatchPage}
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: COMMISSION WALLET */}
+      {activeTab === 'wallet' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div className="grid-responsive-2">
+            <div className="card">
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Available Commission</div>
+              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-amber)', margin: '0.4rem 0 1rem' }}>
+                ₹{Number(agentBal).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <button
-                onClick={() => { setPayoutAmount(String(currentBalance)); setShowPayoutModal(true); }}
-                style={{
-                  background: '#FFFFFF',
-                  color: '#D97706',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '10px',
-                  fontWeight: 700,
-                  fontSize: '0.85rem',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  marginTop: '0.5rem',
-                  cursor: 'pointer'
-                }}
+                onClick={() => setShowPayoutModal(true)}
+                disabled={agentBal <= 0}
+                className="btn-primary"
+                style={{ width: '100%', justifyContent: 'center' }}
               >
-                Withdraw to Bank <ArrowUpRight size={16} />
+                <ArrowUpRight size={18} /> Withdraw Commission
               </button>
             </div>
 
             <div className="card">
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Completed Deliveries</div>
-              <div style={{ fontSize: 'clamp(1.4rem, 3vw, 1.8rem)', fontWeight: 800, margin: '0.4rem 0', color: 'var(--text-main)' }}>
-                {agentProfile?.totalDeliveries || 69} Completed
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', fontWeight: 600 }}>
-                ₹50 Commission Credited / Task
-              </div>
-            </div>
-
-            <div className="card">
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Linked Payout Bank Account</div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0.4rem 0', color: 'var(--text-main)' }}>
-                {agentProfile?.bankDetails?.bankName || 'HDFC Bank'}
-              </div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                A/C: {agentProfile?.bankDetails?.accountNo || 'XXXX-XXXX-3341'}
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>Vehicle & Area Assignment</h4>
+              <div style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <div>Vehicle: <strong>{agentProfile?.vehicleNo || 'GJ-07-MK-4421'}</strong></div>
+                <div>Assigned Route: <strong>{agentProfile?.assignedArea || 'Sector 14 & Green Valley'}</strong></div>
+                <div>Commission Rate: <strong>₹2.50 per Liter collected & delivered</strong></div>
               </div>
             </div>
-
           </div>
 
           <div className="card">
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1rem' }}>Delivery Fee & Payout History</h3>
-            <div className="table-responsive">
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem' }}>Transaction ID</th>
-                    <th style={{ padding: '0.75rem' }}>Type</th>
-                    <th style={{ padding: '0.75rem' }}>Date</th>
-                    <th style={{ padding: '0.75rem' }}>Amount</th>
-                    <th style={{ padding: '0.75rem' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {transactions.map(tx => (
-                    <tr key={tx.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <td style={{ padding: '0.75rem', fontWeight: 600 }}>{tx.reference || tx.id}</td>
-                      <td style={{ padding: '0.75rem' }}>{tx.type}</td>
-                      <td style={{ padding: '0.75rem', color: 'var(--text-muted)' }}>{tx.date}</td>
-                      <td style={{ padding: '0.75rem', fontWeight: 800, color: tx.type.includes('Credit') ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                        {tx.type.includes('Credit') ? '+' : '-'}₹{tx.amount}
-                      </td>
-                      <td style={{ padding: '0.75rem' }}>
-                        <span className="badge badge-success">{tx.status}</span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-        </div>
-      )}
-
-      {/* TAB 3: COMPLETED HISTORY */}
-      {activeTab === 'history' && (
-        <div className="card">
-          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1.25rem' }}>Completed Batch Collections & Tasks</h3>
-          <div className="table-responsive">
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                  <th style={{ padding: '0.75rem' }}>Batch ID / Consumer</th>
-                  <th style={{ padding: '0.75rem' }}>Type</th>
-                  <th style={{ padding: '0.75rem' }}>Volume</th>
-                  <th style={{ padding: '0.75rem' }}>Quality Test</th>
-                  <th style={{ padding: '0.75rem' }}>Commission Earned</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dashboardData?.farmerPickups?.map(pickup => (
-                  <tr key={pickup.id || pickup.batchId} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                    <td style={{ padding: '0.75rem', fontWeight: 700 }}>
-                      <div style={{ fontFamily: 'monospace', color: 'var(--accent-emerald)' }}>{pickup.batchId || pickup.id}</div>
-                      <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{pickup.farmerName}</div>
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>Farmer Milk Collection</td>
-                    <td style={{ padding: '0.75rem', fontWeight: 800 }}>{pickup.liters} L</td>
-                    <td style={{ padding: '0.75rem', fontSize: '0.82rem' }}>
-                      {pickup.qualityTest ? `Fat: ${pickup.qualityTest.fatPercentage}% | SNF: ${pickup.qualityTest.snfPercentage}% | ${pickup.qualityTest.temperature}°C` : '-'}
-                    </td>
-                    <td style={{ padding: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
-                      +₹50.00
-                    </td>
-                    <td style={{ padding: '0.75rem' }}>
-                      <span className={`badge ${pickup.status === 'Rejected' ? 'badge-danger' : 'badge-success'}`}>{pickup.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================== */}
-      {/* MODAL 1: QUALITY TESTING & ACCEPTANCE MODAL */}
-      {/* ========================================================== */}
-      {activePickup && (
-        <div className="modal-backdrop-custom" onClick={() => setActivePickup(null)}>
-          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-              <div>
-                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
-                  ON-SITE MILK QUALITY TEST
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem' }}>Commission History</h3>
+            {transactions.length === 0 ? (
+              <EmptyState
+                title="No commission records yet"
+                description="Earnings from verified collections will appear here."
+              />
+            ) : (
+              <>
+                <div className="table-responsive">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Description</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedTx.map((tx, i) => (
+                        <tr key={i}>
+                          <td>{new Date(tx.timestamp || Date.now()).toLocaleDateString()}</td>
+                          <td>{tx.description}</td>
+                          <td><strong style={{ color: 'var(--accent-emerald)' }}>+₹{tx.amount}</strong></td>
+                          <td><span className="badge badge-success">Credited</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '2px' }}>
-                  Batch #{activePickup.batchId || activePickup.id} ({activePickup.liters} L)
-                </h3>
+
+                <Pagination
+                  currentPage={txPage}
+                  totalItems={transactions.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setTxPage}
+                />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Quality Testing & Field Acceptance */}
+      {activePickup && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
+          <div className="card" style={{ maxWidth: '540px', width: '100%', maxHeight: '85vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <ShieldCheck size={22} color="var(--accent-emerald)" />
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Field Quality Inspection</h3>
               </div>
-              <button onClick={() => setActivePickup(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                <X size={20} />
+              <button onClick={() => setActivePickup(null)} className="btn-secondary" style={{ padding: '4px 8px' }}>
+                <X size={16} />
               </button>
             </div>
 
-            {/* Live Calculation Preview Banner */}
-            <div style={{
-              background: 'linear-gradient(135deg, rgba(5, 150, 105, 0.15) 0%, rgba(37, 99, 235, 0.1) 100%)',
-              border: '1px solid var(--accent-emerald)',
-              borderRadius: '14px',
-              padding: '0.85rem 1rem',
-              marginBottom: '1.25rem',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              gap: '0.5rem'
-            }}>
-              <div>
-                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Dynamic Rate & Payout</div>
-                <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
-                  ₹{calculatedRate}/L ➔ ₹{calculatedTotal}
-                </div>
-              </div>
-              <div style={{ textAlign: 'left' }}>
-                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700 }}>Quality Score</div>
-                <div style={{ fontSize: '1.2rem', fontWeight: 800, color: calculatedScore >= 80 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                  {calculatedScore}/100
-                </div>
-              </div>
+            <div style={{ background: 'var(--bg-primary)', padding: '0.85rem', borderRadius: '12px', marginBottom: '1rem', fontSize: '0.85rem' }}>
+              <div>Batch ID: <strong style={{ fontFamily: 'monospace', color: 'var(--accent-amber)' }}>{activePickup.batchId}</strong></div>
+              <div>Farmer: <strong>{activePickup.farmerName}</strong> ({activePickup.farmName})</div>
+              <div>Quantity: <strong>{activePickup.liters} Liters</strong></div>
             </div>
 
             <form onSubmit={handleTestAndCollect} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem' }}>
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Fat Percentage (%)</label>
                   <input
@@ -650,10 +553,9 @@ export default function DeliveryDashboard() {
                     required
                     value={testedFat}
                     onChange={(e) => setTestedFat(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
                   />
                 </div>
-
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>SNF Percentage (%)</label>
                   <input
@@ -664,12 +566,9 @@ export default function DeliveryDashboard() {
                     required
                     value={testedSNF}
                     onChange={(e) => setTestedSNF(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
                   />
                 </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
                 <div>
                   <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Lactometer Reading</label>
                   <input
@@ -680,12 +579,11 @@ export default function DeliveryDashboard() {
                     required
                     value={lactometer}
                     onChange={(e) => setLactometer(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
                   />
                 </div>
-
                 <div>
-                  <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Milk Temperature (°C)</label>
+                  <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Chilled Temp (°C)</label>
                   <input
                     type="number"
                     step="0.5"
@@ -694,28 +592,45 @@ export default function DeliveryDashboard() {
                     required
                     value={temperature}
                     onChange={(e) => setTemperature(e.target.value)}
-                    style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.05rem', fontWeight: 800, marginTop: '4px' }}
+                    style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
                   />
                 </div>
               </div>
 
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Inspector Remarks</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Pure fresh organic morning batch"
-                  value={inspectionRemarks}
-                  onChange={(e) => setInspectionRemarks(e.target.value)}
-                  style={{ width: '100%', padding: '0.65rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '0.85rem', marginTop: '4px' }}
-                />
+              {/* Live Rate Preview */}
+              <div style={{ background: 'var(--accent-emerald-light)', padding: '0.85rem', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', fontWeight: 700 }}>CALCULATED RATE</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>₹{calculatedRate}/L</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', fontWeight: 700 }}>FARMER PAYOUT</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>₹{calculatedTotal}</div>
+                </div>
               </div>
 
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                <button type="button" onClick={() => setActivePickup(null)} className="btn-secondary" style={{ flex: 1, minWidth: '110px', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setActivePickup(null)}
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
                   Cancel
                 </button>
-                <button type="submit" disabled={submittingTest} className="btn-primary" style={{ flex: 1.5, minWidth: '150px', justifyContent: 'center' }}>
-                  {submittingTest ? 'Saving...' : 'Verify & Credit Farmer (₹50 Fee)'}
+                <button
+                  type="submit"
+                  disabled={submittingTest}
+                  className="btn-primary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
+                  {submittingTest ? (
+                    <>
+                      <Loader2 size={16} className="pulse-anim" /> Processing...
+                    </>
+                  ) : (
+                    'Accept & Credit Payout'
+                  )}
                 </button>
               </div>
             </form>
@@ -723,80 +638,65 @@ export default function DeliveryDashboard() {
         </div>
       )}
 
-      {/* ========================================================== */}
-      {/* MODAL 2: BATCH REJECTION MODAL */}
-      {/* ========================================================== */}
+      {/* MODAL: Rejection Quarantine */}
       {rejectingPickup && (
-        <div className="modal-backdrop-custom" onClick={() => setRejectingPickup(null)}>
-          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()} style={{ borderTop: '4px solid var(--accent-rose)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
-              <div>
-                <div style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--accent-rose)', textTransform: 'uppercase' }}>
-                  QUALITY REJECTION SYSTEM
-                </div>
-                <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '2px' }}>
-                  Reject Batch #{rejectingPickup.batchId || rejectingPickup.id}
-                </h3>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
+          <div className="card" style={{ maxWidth: '480px', width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertTriangle size={22} color="var(--accent-rose)" />
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--accent-rose)' }}>Reject Milk Batch</h3>
               </div>
-              <button onClick={() => setRejectingPickup(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}>
-                <X size={20} />
+              <button onClick={() => setRejectingPickup(null)} className="btn-secondary" style={{ padding: '4px 8px' }}>
+                <X size={16} />
               </button>
-            </div>
-
-            <div style={{ background: 'var(--accent-rose-light)', color: 'var(--accent-rose)', padding: '0.75rem', borderRadius: '10px', fontSize: '0.8rem', marginBottom: '1rem', lineHeight: '1.4' }}>
-              ⚠️ <strong>Warning:</strong> Rejecting will quarantine the batch, block farmer payout, and alert the Admin Review board with your inspection findings.
             </div>
 
             <form onSubmit={handleRejectBatch} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Primary Rejection Reason</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Rejection Reason (Enum Standard)</label>
                 <select
                   value={rejectionReason}
                   onChange={(e) => setRejectionReason(e.target.value)}
-                  style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', fontSize: '0.88rem', fontWeight: 700 }}
+                  style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
                 >
                   <option value="Low quality reading">Low quality reading</option>
                   <option value="Abnormal Fat/SNF">Abnormal Fat/SNF</option>
                   <option value="Abnormal Lactometer Reading">Abnormal Lactometer Reading</option>
-                  <option value="Temperature issue">Temperature issue (&gt;10°C / spoiled)</option>
+                  <option value="Temperature issue">Temperature issue</option>
                   <option value="Contamination concern">Contamination concern</option>
-                  <option value="Damaged/unsafe batch">Damaged/unsafe batch container</option>
+                  <option value="Damaged/unsafe batch">Damaged/unsafe batch</option>
                   <option value="Other">Other</option>
                 </select>
               </div>
 
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Detailed Remarks & Observations</label>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Agent Remarks / Test Details</label>
                 <textarea
                   rows={3}
                   required
-                  placeholder="Explain why this milk batch failed inspection standards..."
+                  placeholder="Explain why this batch failed inspection..."
                   value={rejectionRemarks}
                   onChange={(e) => setRejectionRemarks(e.target.value)}
-                  style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', fontSize: '0.88rem' }}
+                  style={{ width: '100%', padding: '0.65rem', borderRadius: '8px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
                 />
               </div>
 
-              <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Optional Evidence Photo</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handlePhotoUpload}
-                  style={{ width: '100%', marginTop: '4px', fontSize: '0.82rem' }}
-                />
-                {evidencePhoto && (
-                  <div style={{ marginTop: '0.5rem', borderRadius: '8px', overflow: 'hidden', maxHeight: '140px' }}>
-                    <img src={evidencePhoto} alt="Rejection Evidence" style={{ width: '100%', maxHeight: '140px', objectFit: 'contain' }} />
-                  </div>
-                )}
-              </div>
-
-              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem', flexWrap: 'wrap' }}>
-                <button type="button" onClick={() => setRejectingPickup(null)} className="btn-secondary" style={{ flex: 1, minWidth: '100px', justifyContent: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={() => setRejectingPickup(null)}
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
                   Cancel
                 </button>
-                <button type="submit" disabled={submittingRejection} className="btn-primary" style={{ flex: 1.5, minWidth: '140px', justifyContent: 'center', background: 'var(--accent-rose)', borderColor: 'var(--accent-rose)' }}>
+                <button
+                  type="submit"
+                  disabled={submittingRejection}
+                  className="btn-primary"
+                  style={{ flex: 1, justifyContent: 'center', background: 'var(--accent-rose)', borderColor: 'var(--accent-rose)' }}
+                >
                   {submittingRejection ? 'Quarantining...' : 'Confirm Rejection'}
                 </button>
               </div>
@@ -805,34 +705,52 @@ export default function DeliveryDashboard() {
         </div>
       )}
 
-      {/* Payout Withdrawal Modal */}
+      {/* MODAL: Agent Commission Payout */}
       {showPayoutModal && (
-        <div className="modal-backdrop-custom" onClick={() => setShowPayoutModal(false)}>
-          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Initiate Agent Payout</h3>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
+          <div className="card" style={{ maxWidth: '440px', width: '100%' }}>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.5rem' }}>Withdraw Commission</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+              Available Balance: <strong>₹{agentBal}</strong>
+            </p>
 
             {payoutMsg && (
-              <div style={{ background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', padding: '0.65rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: 600 }}>
+              <div style={{ padding: '0.75rem', borderRadius: '8px', background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', fontSize: '0.85rem', marginBottom: '1rem', fontWeight: 600 }}>
                 {payoutMsg}
               </div>
             )}
 
-            <form onSubmit={handleAgentPayout} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <form onSubmit={handlePayoutRequest} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Withdrawal Amount (₹)</label>
-                <input type="number" required value={payoutAmount} onChange={(e) => setPayoutAmount(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.1rem', fontWeight: 800 }} />
-              </div>
-
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                Target Account: <strong>{agentProfile?.bankDetails?.bankName || 'HDFC Bank'} ({agentProfile?.bankDetails?.accountNo || 'XXXX-3341'})</strong>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Amount (₹)</label>
+                <input
+                  type="number"
+                  required
+                  min="50"
+                  max={agentBal}
+                  value={payoutAmount}
+                  onChange={(e) => setPayoutAmount(e.target.value)}
+                  placeholder={`Max ₹${agentBal}`}
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
+                />
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" onClick={() => setShowPayoutModal(false)} className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowPayoutModal(false)}
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
-                  Confirm Withdrawal
+                <button
+                  type="submit"
+                  disabled={submittingPayout || Number(payoutAmount) <= 0 || Number(payoutAmount) > agentBal}
+                  className="btn-primary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
+                  {submittingPayout ? 'Processing...' : 'Confirm'}
                 </button>
               </div>
             </form>

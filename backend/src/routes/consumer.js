@@ -306,23 +306,103 @@ router.post('/simulate-delivery-day', (req, res) => {
   });
 });
 
-// PUT /api/consumer/settings
-router.put('/settings', (req, res) => {
-  const { consumerId, address, phone, deliveryTimeSlot } = req.body;
+// GET /api/consumer/products - Products Catalog
+router.get('/products', (req, res) => {
+  const products = [
+    { id: 'p1', name: 'Pure Fresh A2 Cow Milk', price: 65, unit: 'Liter', description: 'Certified pure A2 indigenous organic cow milk.' },
+    { id: 'p2', name: 'Fresh Farm Buffalo Milk', price: 75, unit: 'Liter', description: 'Creamy 7.5% fat organic buffalo milk.' },
+    { id: 'p3', name: 'Desi Cow Bilona Ghee', price: 1200, unit: '500g', description: 'Traditional wooden churned cultured ghee.' },
+    { id: 'p4', name: 'Organic Probiotic Set Curd', price: 45, unit: '400g', description: 'Fresh cultured thick curd.' }
+  ];
+  return res.json({ success: true, count: products.length, products });
+});
+
+// POST /api/consumer/subscription - Create or Update Subscription
+router.post('/subscription', (req, res) => {
+  const { consumerId, plan, quantity, productType, deliveryTime } = req.body;
   const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
+  
+  const subData = {
+    id: `sub_${consumerId || Date.now()}`,
+    planName: productType || 'Pure Fresh A2 Cow Milk',
+    planType: plan || 'Daily',
+    dailyLiters: Number(quantity) || 2,
+    totalDays: 30,
+    daysRemaining: 30,
+    status: 'Active',
+    pricePerLiter: 65,
+    deliveryTimeSlot: deliveryTime || '6:30 AM - 7:30 AM',
+    startDate: new Date().toISOString().split('T')[0]
+  };
 
-  if (!consumer) return res.status(404).json({ success: false, message: 'Consumer not found.' });
-
-  if (address) consumer.address = address;
-  if (phone) consumer.phone = phone;
-  if (deliveryTimeSlot && consumer.subscription) {
-    consumer.subscription.deliveryTimeSlot = deliveryTimeSlot;
+  if (consumer) {
+    consumer.subscription = subData;
   }
 
   return res.json({
     success: true,
-    message: 'Consumer delivery settings updated!',
-    consumer
+    message: 'Subscription plan created successfully!',
+    subscription: subData
+  });
+});
+
+// POST /api/consumer/subscription/pause
+router.post('/subscription/pause', (req, res) => {
+  const { consumerId } = req.body;
+  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
+  if (consumer && consumer.subscription) {
+    consumer.subscription.status = 'Paused';
+  }
+  return res.json({
+    success: true,
+    message: 'Subscription paused successfully.',
+    subscription: consumer ? consumer.subscription : { status: 'Paused' }
+  });
+});
+
+// POST /api/consumer/subscription/resume
+router.post('/subscription/resume', (req, res) => {
+  const { consumerId } = req.body;
+  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
+  if (consumer && consumer.subscription) {
+    consumer.subscription.status = 'Active';
+  }
+  return res.json({
+    success: true,
+    message: 'Subscription resumed successfully.',
+    subscription: consumer ? consumer.subscription : { status: 'Active' }
+  });
+});
+
+// POST /api/consumer/order - Instant Dairy Order
+router.post('/order', (req, res) => {
+  const { consumerId, items, deliveryAddress, paymentMethod } = req.body;
+  const orderId = `HM-ORD-${Date.now().toString().slice(-6)}`;
+  const order = {
+    orderId,
+    consumerId,
+    items: items || [],
+    deliveryAddress: deliveryAddress || '123 Green Avenue',
+    paymentMethod: paymentMethod || 'UPI',
+    status: 'Confirmed',
+    totalAmount: (items || []).reduce((acc, c) => acc + (c.price * c.quantity), 0),
+    orderDate: new Date().toISOString()
+  };
+
+  notifications.unshift({
+    id: `notif_${Date.now()}`,
+    userId: consumerId,
+    title: 'Order Confirmed',
+    message: `Order #${orderId} placed successfully. Tracking available soon.`,
+    time: 'Just now',
+    read: false,
+    type: 'success'
+  });
+
+  return res.json({
+    success: true,
+    message: 'Order placed successfully!',
+    order
   });
 });
 

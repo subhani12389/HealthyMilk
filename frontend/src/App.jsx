@@ -1,12 +1,28 @@
-import React, { Component } from 'react';
+import React, { Component, lazy, Suspense } from 'react';
 import { useAuth } from './context/AuthContext';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import AuthPage from './pages/AuthPage';
-import FarmerDashboard from './pages/FarmerDashboard';
-import ConsumerDashboard from './pages/ConsumerDashboard';
-import DeliveryDashboard from './pages/DeliveryDashboard';
-import AdminDashboard from './pages/AdminDashboard';
+import { SkeletonBanner, SkeletonStatGrid, SkeletonCard } from './components/Skeleton';
+
+// Code Splitting & Dynamic Imports for Fast Startup
+const FarmerDashboard = lazy(() => import('./pages/FarmerDashboard'));
+const ConsumerDashboard = lazy(() => import('./pages/ConsumerDashboard'));
+const DeliveryDashboard = lazy(() => import('./pages/DeliveryDashboard'));
+const AdminDashboard = lazy(() => import('./pages/AdminDashboard'));
+
+function DashboardFallback() {
+  return (
+    <div style={{ maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+      <SkeletonBanner />
+      <SkeletonStatGrid count={4} />
+      <div className="grid-responsive-2">
+        <SkeletonCard height="320px" />
+        <SkeletonCard height="320px" />
+      </div>
+    </div>
+  );
+}
 
 // Error Boundary Component to prevent white screens
 class ErrorBoundary extends Component {
@@ -44,15 +60,7 @@ class ErrorBoundary extends Component {
 }
 
 export default function App() {
-  const { user, initializing } = useAuth();
-
-  if (initializing) {
-    return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-primary)', color: 'var(--text-muted)' }}>
-        <p>Initializing HealthyMilk Portal...</p>
-      </div>
-    );
-  }
+  const { user } = useAuth();
 
   if (!user) {
     return <AuthPage />;
@@ -81,11 +89,13 @@ export default function App() {
           boxSizing: 'border-box'
         }}>
           <ErrorBoundary>
-            {role === 'admin' && <AdminDashboard />}
-            {(role === 'farmer' || role.includes('farm')) && <FarmerDashboard />}
-            {(role === 'consumer' || role.includes('sub')) && <ConsumerDashboard />}
-            {(role === 'agent' || role === 'delivery' || role.includes('agent')) && <DeliveryDashboard />}
-            {!['admin', 'farmer', 'consumer', 'agent', 'delivery'].some(r => role.includes(r)) && <FarmerDashboard />}
+            <Suspense fallback={<DashboardFallback />}>
+              {role === 'admin' && <AdminDashboard />}
+              {(role === 'farmer' || role.includes('farm')) && <FarmerDashboard />}
+              {(role === 'consumer' || role.includes('sub')) && <ConsumerDashboard />}
+              {(role === 'agent' || role === 'delivery' || role.includes('agent')) && <DeliveryDashboard />}
+              {!['admin', 'farmer', 'consumer', 'agent', 'delivery'].some(r => role.includes(r)) && <FarmerDashboard />}
+            </Suspense>
           </ErrorBoundary>
         </main>
       </div>

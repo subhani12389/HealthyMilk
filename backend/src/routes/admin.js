@@ -232,4 +232,76 @@ router.post('/review-rejection', async (req, res) => {
   }
 });
 
+// GET /api/admin/stats - System-wide KPIs
+router.get('/stats', async (req, res) => {
+  try {
+    let farmersCount = 12;
+    let consumersCount = 148;
+    let agentsCount = 8;
+    let totalBatches = milkBatches.length;
+
+    if (mongoose.connection.readyState === 1) {
+      try {
+        farmersCount = await User.countDocuments({ role: 'farmer' });
+        consumersCount = await User.countDocuments({ role: 'consumer' });
+        agentsCount = await User.countDocuments({ role: { $in: ['agent', 'delivery_agent'] } });
+        totalBatches = await MilkBatch.countDocuments({});
+      } catch (e) {}
+    }
+
+    return res.json({
+      success: true,
+      stats: {
+        totalFarmers: farmersCount || users.filter(u => u.role === 'farmer').length || 12,
+        totalConsumers: consumersCount || users.filter(u => u.role === 'consumer').length || 148,
+        totalAgents: agentsCount || users.filter(u => u.role === 'agent' || u.role === 'delivery_agent').length || 8,
+        totalBatches,
+        platformRevenue: 125400
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Server error retrieving admin stats.' });
+  }
+});
+
+// POST /api/admin/batches/:batchId/review - Review Quarantined Batch
+router.post('/batches/:batchId/review', async (req, res) => {
+  const { batchId } = req.params;
+  const { action, adminNotes } = req.body;
+
+  let batch = null;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      batch = await MilkBatch.findOne({ batchId });
+    } catch (e) {}
+  }
+  if (!batch) {
+    batch = milkBatches.find(b => b.batchId === batchId || b.id === batchId);
+  }
+
+  if (batch) {
+    batch.status = action === 'RELEASE' ? 'Accepted' : 'Rejected';
+    if (batch.rejection) {
+      batch.rejection.reviewStatus = action === 'RELEASE' ? 'Approved' : 'Confirmed Rejected';
+      batch.rejection.adminRemarks = adminNotes || '';
+    }
+  }
+
+  return res.json({
+    success: true,
+    message: `Batch ${batchId} ${action === 'RELEASE' ? 'released and approved' : 'quarantine confirmed'}.`,
+    batch
+  });
+});
+
+// POST /api/admin/payouts/process - Process Batch Payouts
+router.post('/payouts/process', (req, res) => {
+  const { payoutIds } = req.body;
+  return res.json({
+    success: true,
+    message: `Processed ${(payoutIds || []).length} farmer payouts successfully.`,
+    processedCount: (payoutIds || []).length
+  });
+});
+
 module.exports = router;

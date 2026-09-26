@@ -1,21 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
 import { renderQRCodeSVG, generateBatchQRData } from '../utils/qrCode';
+import { SkeletonBanner, SkeletonStatGrid, SkeletonCard, SkeletonTable } from '../components/Skeleton';
+import Pagination from '../components/Pagination';
+import EmptyState from '../components/EmptyState';
 import { 
   Milk, Wallet, Clock, Settings, CheckCircle2, AlertTriangle, 
   Truck, ShieldCheck, ArrowUpRight, Search, Download, 
-  RefreshCw, Send, QrCode, Award, Eye, Thermometer 
+  RefreshCw, Send, QrCode, Award, Eye, Thermometer, Loader2, Sparkles
 } from 'lucide-react';
 
 export default function FarmerDashboard() {
   const { user, activeTab, updateUserBalance } = useAuth();
+  const { showToast } = useToast();
 
   const [dashboardData, setDashboardData] = useState(null);
   const [batchesList, setBatchesList] = useState([]);
   const [historyLogs, setHistoryLogs] = useState([]);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Pagination States
+  const [batchPage, setBatchPage] = useState(1);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [txPage, setTxPage] = useState(1);
+  const PAGE_SIZE = 6;
 
   // Request Pickup Form State
   const [liters, setLiters] = useState('50');
@@ -27,6 +38,7 @@ export default function FarmerDashboard() {
   // Payout Modal State
   const [showPayoutModal, setShowPayoutModal] = useState(false);
   const [payoutAmount, setPayoutAmount] = useState('');
+  const [submittingPayout, setSubmittingPayout] = useState(false);
   const [payoutMsg, setPayoutMsg] = useState('');
 
   // QR Modal State
@@ -41,6 +53,7 @@ export default function FarmerDashboard() {
   const [cattleCount, setCattleCount] = useState('24');
   const [bankName, setBankName] = useState('');
   const [accountNo, setAccountNo] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState('');
 
   // Search filter
@@ -48,31 +61,33 @@ export default function FarmerDashboard() {
 
   const fetchFarmerData = async () => {
     if (!user?.id) return;
-    setLoading(true);
     try {
-      const data = await apiFetch(`/api/farmer/dashboard?farmerId=${user.id}`);
-      if (data && data.success) {
-        setDashboardData(data);
-        setBatchesList(data.batches || []);
-        if (data.farmer) {
-          setFarmName(data.farmer.farmName || '');
-          setLocation(data.farmer.location || '');
-          setCattleCount(String(data.farmer.cattleCount || 24));
-          setBankName(data.farmer.bankDetails?.bankName || '');
-          setAccountNo(data.farmer.bankDetails?.accountNo || '');
+      const [dashRes, histRes] = await Promise.all([
+        apiFetch(`/api/farmer/dashboard?farmerId=${user.id}`),
+        apiFetch(`/api/farmer/history?farmerId=${user.id}`)
+      ]);
+
+      if (dashRes && dashRes.success) {
+        setDashboardData(dashRes);
+        setBatchesList(dashRes.batches || []);
+        if (dashRes.farmer) {
+          setFarmName(dashRes.farmer.farmName || '');
+          setLocation(dashRes.farmer.location || '');
+          setCattleCount(String(dashRes.farmer.cattleCount || 24));
+          setBankName(dashRes.farmer.bankDetails?.bankName || '');
+          setAccountNo(dashRes.farmer.bankDetails?.accountNo || '');
           
-          if (data.farmer.balance !== undefined) {
-            updateUserBalance(data.farmer.balance);
+          if (dashRes.farmer.balance !== undefined) {
+            updateUserBalance(dashRes.farmer.balance);
           }
         }
       }
 
-      const histData = await apiFetch(`/api/farmer/history?farmerId=${user.id}`);
-      if (histData && histData.success) {
-        setHistoryLogs(Array.isArray(histData.logs) ? histData.logs : []);
-        setTransactions(Array.isArray(histData.transactions) ? histData.transactions : []);
-        if (histData.batches && histData.batches.length > 0) {
-          setBatchesList(histData.batches);
+      if (histRes && histRes.success) {
+        setHistoryLogs(Array.isArray(histRes.logs) ? histRes.logs : []);
+        setTransactions(Array.isArray(histRes.transactions) ? histRes.transactions : []);
+        if (histRes.batches && histRes.batches.length > 0) {
+          setBatchesList(histRes.batches);
         }
       }
     } catch (err) {
@@ -88,7 +103,9 @@ export default function FarmerDashboard() {
 
   // Submit Milk Collection Request
   const handleRequestPickup = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    if (submittingLog) return;
+
     setSubmittingLog(true);
     setLogSuccessMsg('');
     setGeneratedBatchId('');
@@ -104,10 +121,14 @@ export default function FarmerDashboard() {
       if (data && data.success) {
         setLogSuccessMsg(data.message);
         setGeneratedBatchId(data.batchId || data.batch?.batchId || '');
+        showToast(`Batch ${data.batchId} created successfully!`, 'success');
         fetchFarmerData();
+      } else {
+        showToast(data?.message || 'Failed to request pickup.', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Error requesting pickup.', 'error');
     } finally {
       setSubmittingLog(false);
     }
@@ -115,31 +136,41 @@ export default function FarmerDashboard() {
 
   // Process Payout Request
   const handlePayoutRequest = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    if (submittingPayout) return;
+
+    setSubmittingPayout(true);
     setPayoutMsg('');
     try {
       const data = await apiFetch('/api/farmer/payout', {
         method: 'POST',
         body: JSON.stringify({
           farmerId: user?.id,
-          amount: payoutAmount
+          amount: Number(payoutAmount)
         })
       });
       if (data && data.success) {
         setPayoutMsg(data.message);
+        showToast('Payout withdrawal request submitted successfully.', 'success');
         if (data.remainingBalance !== undefined) {
           updateUserBalance(data.remainingBalance);
         }
         setTimeout(() => {
           setShowPayoutModal(false);
           setPayoutMsg('');
+          setPayoutAmount('');
           fetchFarmerData();
-        }, 1200);
+        }, 1000);
       } else {
-        setPayoutMsg(data?.message || 'Payout failed');
+        const msg = data?.message || 'Payout failed.';
+        setPayoutMsg(msg);
+        showToast(msg, 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Error submitting payout request.', 'error');
+    } finally {
+      setSubmittingPayout(false);
     }
   };
 
@@ -167,11 +198,15 @@ export default function FarmerDashboard() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    showToast('Batch ledger exported to CSV.', 'info');
   };
 
   // Save Settings
   const handleSaveSettings = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
+    if (savingSettings) return;
+
+    setSavingSettings(true);
     setSettingsMsg('');
     try {
       const data = await apiFetch('/api/farmer/settings', {
@@ -180,23 +215,39 @@ export default function FarmerDashboard() {
           farmerId: user?.id,
           farmName,
           location,
-          cattleCount,
-          bankDetails: { bankName, accountNo }
+          cattleCount: Number(cattleCount),
+          bankDetails: {
+            bankName,
+            accountNo,
+            ifsc: 'SBIN0004123'
+          }
         })
       });
       if (data && data.success) {
-        setSettingsMsg('Profile & settings saved successfully!');
+        setSettingsMsg('Profile updated successfully!');
+        showToast('Farm profile & bank settings saved!', 'success');
         fetchFarmerData();
+      } else {
+        setSettingsMsg(data?.message || 'Failed to update settings');
+        showToast(data?.message || 'Failed to update profile.', 'error');
       }
     } catch (err) {
       console.error(err);
+      showToast('Error updating profile settings.', 'error');
+    } finally {
+      setSavingSettings(false);
     }
   };
 
-  const currentMilk = dashboardData?.currentMilkStatus;
-  const farmerProfile = dashboardData?.farmer;
-  const stats = dashboardData?.stats;
-  const currentBalance = user?.balance !== undefined ? user.balance : (farmerProfile?.balance || 0);
+  const farmerProfile = dashboardData?.farmer || user;
+  const currentBalance = farmerProfile?.balance !== undefined ? farmerProfile.balance : (user?.balance || 0);
+  const stats = dashboardData?.stats || {
+    totalLitersAllTime: 0,
+    totalEarningsAllTime: 0,
+    logsCount: 0,
+    acceptedCount: 0,
+    rejectedCount: 0
+  };
 
   const rejectedBatches = (batchesList || []).filter(b => b.status === 'Rejected');
   const txList = Array.isArray(transactions) ? transactions : [];
@@ -208,6 +259,24 @@ export default function FarmerDashboard() {
     const notesStr = String(batch.notes || '').toLowerCase();
     return batchIdStr.includes(q) || statusStr.includes(q) || notesStr.includes(q);
   });
+
+  // Paginated Slices
+  const paginatedBatches = filteredBatches.slice((batchPage - 1) * PAGE_SIZE, batchPage * PAGE_SIZE);
+  const paginatedHistory = historyLogs.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
+  const paginatedTx = txList.slice((txPage - 1) * PAGE_SIZE, txPage * PAGE_SIZE);
+
+  if (loading && !dashboardData) {
+    return (
+      <div style={{ maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+        <SkeletonBanner />
+        <SkeletonStatGrid count={4} />
+        <div className="grid-responsive-2">
+          <SkeletonCard height="340px" />
+          <SkeletonCard height="340px" />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
@@ -298,34 +367,14 @@ export default function FarmerDashboard() {
               <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Request Milk Collection</h3>
             </div>
 
-            <div style={{
-              background: 'var(--accent-blue-light)',
-              color: 'var(--accent-blue)',
-              padding: '0.75rem',
-              borderRadius: '10px',
-              marginBottom: '1.25rem',
-              fontSize: '0.82rem',
-              lineHeight: '1.4'
-            }}>
-              💡 <strong>Batch Traceability:</strong> Submitting creates a unique <strong>Milk Batch ID (HM-YYYYMMDD-XXXX)</strong>. The delivery agent will test Fat %, SNF %, Lactometer, and Temperature on-site to credit funds.
-            </div>
-
             {logSuccessMsg && (
-              <div style={{
-                background: 'var(--accent-emerald-light)',
-                color: 'var(--accent-emerald)',
-                padding: '0.85rem',
-                borderRadius: '12px',
-                marginBottom: '1rem',
-                fontSize: '0.85rem',
-                fontWeight: 600
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div style={{ background: 'var(--accent-emerald-light)', border: '1px solid var(--accent-emerald)', padding: '1rem', borderRadius: '12px', marginBottom: '1.25rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--accent-emerald)', fontWeight: 700 }}>
                   <CheckCircle2 size={18} /> {logSuccessMsg}
                 </div>
                 {generatedBatchId && (
-                  <div style={{ marginTop: '6px', fontSize: '0.9rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
-                    Assigned Batch ID: {generatedBatchId}
+                  <div style={{ marginTop: '0.6rem', fontSize: '0.85rem' }}>
+                    Your Unique Milk Batch ID is: <strong style={{ color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>{generatedBatchId}</strong>
                   </div>
                 )}
               </div>
@@ -333,12 +382,15 @@ export default function FarmerDashboard() {
 
             <form onSubmit={handleRequestPickup} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Milk Volume for Collection (Liters)</label>
+                <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  Milk Quantity (Liters)
+                </label>
                 <input
                   type="number"
-                  step="0.5"
+                  step="0.1"
                   required
-                  placeholder="e.g. 50"
+                  min="1"
+                  max="1000"
                   value={liters}
                   onChange={(e) => setLiters(e.target.value)}
                   style={{
@@ -349,19 +401,20 @@ export default function FarmerDashboard() {
                     background: 'var(--bg-primary)',
                     color: 'var(--text-main)',
                     marginTop: '4px',
-                    fontSize: '1.1rem',
-                    fontWeight: 800
+                    boxSizing: 'border-box'
                   }}
                 />
               </div>
 
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Pickup Notes for Delivery Agent</label>
+                <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  Batch Notes / Morning or Evening
+                </label>
                 <input
                   type="text"
-                  placeholder="e.g. Morning fresh A2 batch in chilled container"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
+                  placeholder="e.g., Morning organic milking, chilled at 4°C"
                   style={{
                     width: '100%',
                     padding: '0.75rem',
@@ -370,7 +423,7 @@ export default function FarmerDashboard() {
                     background: 'var(--bg-primary)',
                     color: 'var(--text-main)',
                     marginTop: '4px',
-                    fontSize: '0.88rem'
+                    boxSizing: 'border-box'
                   }}
                 />
               </div>
@@ -379,383 +432,577 @@ export default function FarmerDashboard() {
                 type="submit"
                 disabled={submittingLog}
                 className="btn-primary"
-                style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}
+                style={{ width: '100%', justifyContent: 'center', padding: '0.85rem', marginTop: '0.5rem' }}
               >
-                {submittingLog ? 'Registering Batch...' : 'Generate Batch & Request Pickup'}
+                {submittingLog ? (
+                  <>
+                    <Loader2 size={18} className="pulse-anim" /> Generating Batch ID...
+                  </>
+                ) : (
+                  <>
+                    <Send size={18} /> Request Pickup & Generate Batch ID
+                  </>
+                )}
               </button>
             </form>
           </div>
 
-          {/* Right: Real-Time Pickup Status & Quality Tracker */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                <Milk size={22} color="var(--accent-emerald)" />
-                <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Today's Batch & Quality</h3>
+          {/* Right: Quick Stats & Recent Batches */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(2, 1fr)',
+              gap: '0.85rem'
+            }}>
+              <div className="card" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Volume Sold</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+                  {stats.totalLitersAllTime} <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>L</span>
+                </div>
               </div>
-              <span className="badge badge-info">{currentMilk?.batchId || (currentMilk ? currentMilk.dateStr : 'Today')}</span>
+              <div className="card" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total Earnings</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '4px' }}>
+                  ₹{Number(stats.totalEarningsAllTime || 0).toLocaleString('en-IN')}
+                </div>
+              </div>
+              <div className="card" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Accepted Batches</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-emerald)', marginTop: '4px' }}>
+                  {stats.acceptedCount}
+                </div>
+              </div>
+              <div className="card" style={{ padding: '1rem' }}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Rejected Batches</div>
+                <div style={{ fontSize: '1.4rem', fontWeight: 800, color: stats.rejectedCount > 0 ? 'var(--accent-rose)' : 'var(--text-muted)', marginTop: '4px' }}>
+                  {stats.rejectedCount}
+                </div>
+              </div>
             </div>
 
-            {currentMilk ? (
-              <div>
-                {/* Batch ID Banner */}
-                <div style={{ background: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '14px', padding: '0.85rem 1rem', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Milk Batch ID</div>
-                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
-                      {currentMilk.batchId || currentMilk.id}
-                    </div>
-                  </div>
-                  <span className={`badge ${currentMilk.status === 'Rejected' ? 'badge-danger' : currentMilk.status === 'Accepted' ? 'badge-success' : 'badge-warning'}`}>
-                    {currentMilk.status}
-                  </span>
-                </div>
-
-                {/* Quality Metrics Grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.65rem', marginBottom: '1.25rem' }}>
-                  <div style={{ background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: '12px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Volume</div>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>{currentMilk.liters} L</div>
-                  </div>
-
-                  <div style={{ background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: '12px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Fat / SNF %</div>
-                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: currentMilk.fatPercentage > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
-                      {currentMilk.fatPercentage > 0 ? `${currentMilk.fatPercentage}% / ${currentMilk.snfPercentage}%` : 'Pending'}
-                    </div>
-                  </div>
-
-                  <div style={{ background: 'var(--bg-primary)', padding: '0.75rem', borderRadius: '12px', textAlign: 'center' }}>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Temperature</div>
-                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--accent-blue)' }}>
-                      {currentMilk.temperature || 4.0}°C
-                    </div>
-                  </div>
-                </div>
-
-                {/* Earned Payout Box */}
-                <div style={{ background: 'var(--bg-primary)', padding: '0.85rem 1rem', borderRadius: '12px', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Calculated Rate & Payout</div>
-                    <div style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--accent-emerald)' }}>
-                      {currentMilk.totalPrice > 0 ? `₹${currentMilk.totalPrice} (@ ₹${currentMilk.ratePerLiter}/L)` : 'Pending Inspection'}
-                    </div>
-                  </div>
-                  {currentMilk.qualityScore > 0 && (
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Quality Score</div>
-                      <div style={{ fontSize: '1rem', fontWeight: 800, color: currentMilk.qualityScore >= 80 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                        {currentMilk.qualityScore}/100
-                      </div>
-                    </div>
-                  )}
-                </div>
-
+            {/* Recent Batches Mini Card */}
+            <div className="card">
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <h4 style={{ fontSize: '0.95rem', fontWeight: 700, margin: 0 }}>Recent Milk Batches</h4>
                 <button
-                  onClick={() => setSelectedQRBatch(currentMilk)}
+                  onClick={fetchFarmerData}
                   className="btn-secondary"
-                  style={{ width: '100%', justifyContent: 'center', marginBottom: '1.25rem', fontSize: '0.85rem' }}
+                  style={{ padding: '4px 8px', fontSize: '0.75rem' }}
                 >
-                  <QrCode size={18} color="var(--accent-emerald)" /> View Batch Traceability QR Code & Certificate
+                  <RefreshCw size={13} /> Refresh
                 </button>
               </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                No active pickup requests. Submit a pickup request on the left to generate your batch ID.
-              </div>
-            )}
-          </div>
 
+              {batchesList.length === 0 ? (
+                <EmptyState
+                  title="No batches recorded yet"
+                  description="Submit your first milk collection request on the left."
+                />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  {batchesList.slice(0, 3).map((b) => (
+                    <div key={b.batchId || b.id} style={{
+                      padding: '0.75rem',
+                      borderRadius: '10px',
+                      background: 'var(--bg-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '0.82rem'
+                    }}>
+                      <div>
+                        <strong style={{ fontFamily: 'monospace', color: 'var(--accent-emerald)' }}>{b.batchId}</strong>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                          {b.liters}L • {new Date(b.collectionDate || Date.now()).toLocaleDateString()}
+                        </div>
+                      </div>
+                      <span className={`badge ${b.status === 'Accepted' || b.status === 'Delivered' ? 'badge-success' : b.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}`}>
+                        {b.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* TAB 2: ACCOUNT BALANCE & PAYOUTS */}
-      {activeTab === 'balance' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-          <div className="grid-responsive-3">
-            
-            <div className="card" style={{ background: 'linear-gradient(135deg, #059669 0%, #047857 100%)', color: '#FFFFFF' }}>
-              <div style={{ fontSize: '0.8rem', opacity: 0.9 }}>Current Earnings Balance</div>
-              <div style={{ fontSize: 'clamp(1.6rem, 3.5vw, 2.25rem)', fontWeight: 800, margin: '0.4rem 0' }}>
+      {/* TAB 2: MILK BATCHES & TRACEABILITY */}
+      {activeTab === 'batches' && (
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Milk Batch Traceability Ledger</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Complete audit history of all milk pickup batches</p>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button onClick={exportCSV} className="btn-secondary" style={{ fontSize: '0.8rem', padding: '6px 12px' }}>
+                <Download size={15} /> Export CSV
+              </button>
+            </div>
+          </div>
+
+          <div style={{ position: 'relative', marginBottom: '1rem' }}>
+            <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+            <input
+              type="text"
+              placeholder="Search by Batch ID, status, or remarks..."
+              value={searchTerm}
+              onChange={(e) => { setSearchTerm(e.target.value); setBatchPage(1); }}
+              style={{
+                width: '100%',
+                padding: '0.65rem 0.75rem 0.65rem 2.2rem',
+                borderRadius: '10px',
+                border: '1px solid var(--border-color)',
+                background: 'var(--bg-primary)',
+                color: 'var(--text-main)',
+                fontSize: '0.85rem',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
+          {filteredBatches.length === 0 ? (
+            <EmptyState
+              title="No batches match your filter"
+              description="Try adjusting your search query or clear the filter."
+            />
+          ) : (
+            <>
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Batch ID</th>
+                      <th>Date</th>
+                      <th>Volume</th>
+                      <th>Quality Metrics</th>
+                      <th>Payout</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedBatches.map((batch) => (
+                      <tr key={batch.batchId || batch.id}>
+                        <td>
+                          <strong style={{ fontFamily: 'monospace', color: 'var(--accent-emerald)' }}>
+                            {batch.batchId || batch.id}
+                          </strong>
+                        </td>
+                        <td>{new Date(batch.collectionDate || batch.timestamp || Date.now()).toLocaleDateString()}</td>
+                        <td><strong>{batch.liters} L</strong></td>
+                        <td>
+                          {batch.qualityTest ? (
+                            <span style={{ fontSize: '0.8rem' }}>
+                              Fat: <strong>{batch.qualityTest.fatPercentage}%</strong> • SNF: <strong>{batch.qualityTest.snfPercentage}%</strong>
+                            </span>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Pending Field Test</span>
+                          )}
+                        </td>
+                        <td>
+                          {batch.qualityTest?.totalPrice ? (
+                            <strong style={{ color: 'var(--accent-emerald)' }}>₹{batch.qualityTest.totalPrice}</strong>
+                          ) : (
+                            <span style={{ color: 'var(--text-muted)' }}>-</span>
+                          )}
+                        </td>
+                        <td>
+                          <span className={`badge ${batch.status === 'Accepted' || batch.status === 'Delivered' ? 'badge-success' : batch.status === 'Rejected' ? 'badge-danger' : 'badge-warning'}`}>
+                            {batch.status}
+                          </span>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', gap: '0.35rem' }}>
+                            <button
+                              onClick={() => setSelectedQRBatch(batch)}
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                              title="View QR Code"
+                            >
+                              <QrCode size={14} />
+                            </button>
+                            <button
+                              onClick={() => setSelectedBatchDetails(batch)}
+                              className="btn-secondary"
+                              style={{ padding: '4px 8px', fontSize: '0.75rem' }}
+                              title="View Timeline"
+                            >
+                              <Eye size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <Pagination
+                currentPage={batchPage}
+                totalItems={filteredBatches.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setBatchPage}
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: QUALITY HISTORY */}
+      {activeTab === 'history' && (
+        <div className="card">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+            <div>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Quality Inspection History</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Lab test metrics, Fat %, SNF %, and Lactometer results</p>
+            </div>
+          </div>
+
+          {historyLogs.length === 0 ? (
+            <EmptyState
+              title="No quality test logs recorded"
+              description="When delivery agents test your milk batches, readings will appear here."
+            />
+          ) : (
+            <>
+              <div className="table-responsive">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Batch ID</th>
+                      <th>Tested Date</th>
+                      <th>Fat %</th>
+                      <th>SNF %</th>
+                      <th>Lactometer</th>
+                      <th>Temp</th>
+                      <th>Score</th>
+                      <th>Rate / L</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedHistory.map((log, idx) => (
+                      <tr key={idx}>
+                        <td style={{ fontFamily: 'monospace', fontWeight: 700 }}>{log.batchId || log.id}</td>
+                        <td>{new Date(log.testedAt || log.timestamp || Date.now()).toLocaleDateString()}</td>
+                        <td><strong style={{ color: 'var(--accent-blue)' }}>{log.fatPercentage}%</strong></td>
+                        <td><strong style={{ color: 'var(--accent-emerald)' }}>{log.snfPercentage}%</strong></td>
+                        <td>{log.lactometerReading || 30.0}</td>
+                        <td>{log.temperature || 4.0}°C</td>
+                        <td>
+                          <span className="badge badge-success">
+                            {log.qualityScore || 85}/100
+                          </span>
+                        </td>
+                        <td><strong>₹{log.ratePerLiter || 45}</strong></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <Pagination
+                currentPage={historyPage}
+                totalItems={historyLogs.length}
+                pageSize={PAGE_SIZE}
+                onPageChange={setHistoryPage}
+              />
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB 4: WALLET & PAYOUTS */}
+      {activeTab === 'wallet' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+          <div className="grid-responsive-2">
+            <div className="card" style={{ background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-card-hover) 100%)' }}>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Wallet Balance Available</div>
+              <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--accent-emerald)', margin: '0.4rem 0 1rem' }}>
                 ₹{Number(currentBalance).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
               <button
-                onClick={() => { setPayoutAmount(String(currentBalance)); setShowPayoutModal(true); }}
-                style={{
-                  background: '#FFFFFF',
-                  color: '#059669',
-                  padding: '0.5rem 1rem',
-                  borderRadius: '10px',
-                  fontWeight: 700,
-                  fontSize: '0.85rem',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  marginTop: '0.5rem',
-                  cursor: 'pointer'
-                }}
+                onClick={() => setShowPayoutModal(true)}
+                disabled={currentBalance <= 0}
+                className="btn-primary"
+                style={{ padding: '0.75rem 1.5rem', width: '100%', justifyContent: 'center' }}
               >
-                Withdraw to Bank <ArrowUpRight size={16} />
+                <ArrowUpRight size={18} /> Request Bank Withdrawal
               </button>
             </div>
 
             <div className="card">
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Volume Collected</div>
-              <div style={{ fontSize: 'clamp(1.4rem, 3vw, 1.8rem)', fontWeight: 800, margin: '0.4rem 0', color: 'var(--text-main)' }}>
-                {stats?.totalLitersAllTime || 110} Liters
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--accent-emerald)', fontWeight: 600 }}>
-                100% Quality Tested by Agent
-              </div>
-            </div>
-
-            <div className="card">
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Linked Payout Bank Account</div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 700, margin: '0.4rem 0', color: 'var(--text-main)' }}>
-                {farmerProfile?.bankDetails?.bankName || 'State Bank of India'}
-              </div>
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                A/C: {farmerProfile?.bankDetails?.accountNo || 'XXXX-XXXX-8921'}
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>Bank Account on File</h4>
+              <div style={{ fontSize: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <div>Bank Name: <strong>{farmerProfile?.bankDetails?.bankName || 'State Bank of India'}</strong></div>
+                <div>Account No: <strong style={{ fontFamily: 'monospace' }}>{farmerProfile?.bankDetails?.accountNo || 'XXXX-XXXX-8921'}</strong></div>
+                <div>IFSC: <strong style={{ fontFamily: 'monospace' }}>{farmerProfile?.bankDetails?.ifsc || 'SBIN0004123'}</strong></div>
               </div>
             </div>
-
           </div>
 
           <div className="card">
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem' }}>Transaction & Payout Log</h3>
-            <div className="table-responsive">
-              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
-                <thead>
-                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '0.75rem' }}>Transaction ID</th>
-                    <th style={{ padding: '0.75rem' }}>Type</th>
-                    <th style={{ padding: '0.75rem' }}>Date</th>
-                    <th style={{ padding: '0.75rem' }}>Amount</th>
-                    <th style={{ padding: '0.75rem' }}>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {txList.map(tx => (
-                    <tr key={tx.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <td style={{ padding: '0.75rem', fontWeight: 600 }}>{tx.reference || tx.id}</td>
-                      <td style={{ padding: '0.75rem' }}>{tx.type}</td>
-                      <td style={{ padding: '0.75rem', color: 'var(--text-muted)' }}>{tx.date}</td>
-                      <td style={{ padding: '0.75rem', fontWeight: 800, color: tx.type?.includes('Credit') ? 'var(--accent-emerald)' : 'var(--accent-blue)' }}>
-                        {tx.type?.includes('Credit') ? '+' : '-'}₹{tx.amount}
-                      </td>
-                      <td style={{ padding: '0.75rem' }}>
-                        <span className={`badge ${tx.status === 'Completed' ? 'badge-success' : 'badge-warning'}`}>
-                          {tx.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
+            <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '1rem' }}>Financial Transaction Ledger</h3>
+            {txList.length === 0 ? (
+              <EmptyState
+                title="No financial transactions yet"
+                description="Earnings from accepted milk batches will appear in this ledger."
+              />
+            ) : (
+              <>
+                <div className="table-responsive">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Description</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedTx.map((tx, i) => (
+                        <tr key={tx.id || i}>
+                          <td>{new Date(tx.timestamp || tx.date || Date.now()).toLocaleDateString()}</td>
+                          <td>
+                            <span className={`badge ${tx.type === 'credit' ? 'badge-success' : 'badge-warning'}`}>
+                              {tx.type}
+                            </span>
+                          </td>
+                          <td>{tx.description}</td>
+                          <td>
+                            <strong style={{ color: tx.type === 'credit' ? 'var(--accent-emerald)' : 'var(--accent-rose)' }}>
+                              {tx.type === 'credit' ? '+' : '-'}₹{tx.amount}
+                            </strong>
+                          </td>
+                          <td><span className="badge badge-success">Completed</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
 
-      {/* TAB 3: BATCH SUPPLY HISTORY WITH TRACEABILITY & CSV EXPORT */}
-      {activeTab === 'history' && (
-        <div className="card">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Milk Batch Traceability & Supply History</h3>
-            
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', width: '100%', maxWidth: '420px' }}>
-              <button onClick={exportCSV} className="btn-secondary" style={{ fontSize: '0.8rem', padding: '0.45rem 0.85rem' }}>
-                <Download size={16} /> Export CSV
-              </button>
-
-              <div style={{ position: 'relative', flex: 1, minWidth: '180px' }}>
-                <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
-                <input
-                  type="text"
-                  placeholder="Search Batch ID, Status..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '0.45rem 0.5rem 0.45rem 2.2rem',
-                    borderRadius: '10px',
-                    border: '1px solid var(--border-color)',
-                    background: 'var(--bg-primary)',
-                    color: 'var(--text-main)',
-                    fontSize: '0.85rem'
-                  }}
+                <Pagination
+                  currentPage={txPage}
+                  totalItems={txList.length}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setTxPage}
                 />
-              </div>
-            </div>
-          </div>
-
-          <div className="table-responsive">
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.88rem' }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
-                  <th style={{ padding: '0.75rem' }}>Batch ID</th>
-                  <th style={{ padding: '0.75rem' }}>Collection Date</th>
-                  <th style={{ padding: '0.75rem' }}>Volume</th>
-                  <th style={{ padding: '0.75rem' }}>Fat % / SNF %</th>
-                  <th style={{ padding: '0.75rem' }}>Lactometer & Temp</th>
-                  <th style={{ padding: '0.75rem' }}>Payout</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem' }}>Certificate</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredBatches.map(b => {
-                  const isRej = b.status === 'Rejected';
-                  const fat = b.qualityTest?.fatPercentage || b.fatPercentage || 0;
-                  const snf = b.qualityTest?.snfPercentage || b.snfPercentage || 0;
-                  const lacto = b.qualityTest?.lactometerReading || b.lactometerReading || 0;
-                  const temp = b.qualityTest?.temperature || 4.0;
-                  const payout = b.qualityTest?.totalPrice || b.totalPrice || 0;
-                  return (
-                    <tr key={b.batchId || b.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                      <td style={{ padding: '0.75rem', fontWeight: 800, color: 'var(--accent-emerald)', fontFamily: 'monospace' }}>
-                        {b.batchId || b.id}
-                      </td>
-                      <td style={{ padding: '0.75rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                        {new Date(b.collectionDate || b.timestamp).toLocaleDateString()}
-                      </td>
-                      <td style={{ padding: '0.75rem', fontWeight: 800 }}>{b.liters} L</td>
-                      <td style={{ padding: '0.75rem' }}>{fat > 0 ? `${fat}% / ${snf}%` : '-'}</td>
-                      <td style={{ padding: '0.75rem', fontSize: '0.8rem' }}>
-                        {lacto > 0 ? `${lacto} • ${temp}°C` : '-'}
-                      </td>
-                      <td style={{ padding: '0.75rem', fontWeight: 800, color: isRej ? 'var(--accent-rose)' : payout > 0 ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
-                        {isRej ? 'Withheld (Rejected)' : payout > 0 ? `₹${payout}` : 'Pending Test'}
-                      </td>
-                      <td style={{ padding: '0.75rem' }}>
-                        <span className={`badge ${isRej ? 'badge-danger' : b.status === 'Accepted' || b.status === 'Delivered' ? 'badge-success' : 'badge-warning'}`}>
-                          {b.status}
-                        </span>
-                      </td>
-                      <td style={{ padding: '0.75rem' }}>
-                        <button onClick={() => setSelectedQRBatch(b)} style={{ background: 'none', border: 'none', color: 'var(--accent-emerald)', fontWeight: 700, fontSize: '0.78rem', cursor: 'pointer' }}>
-                          QR Certificate
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+              </>
+            )}
           </div>
         </div>
       )}
 
-      {/* TAB 4: SETTINGS */}
+      {/* TAB 5: FARM & BANK SETTINGS */}
       {activeTab === 'settings' && (
-        <div className="card" style={{ maxWidth: '650px', margin: '0 auto', width: '100%' }}>
-          <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '1.25rem' }}>Farmer Profile & Bank Settings</h3>
+        <div className="card" style={{ maxWidth: '680px' }}>
+          <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.25rem' }}>Farm & Bank Account Settings</h3>
 
           {settingsMsg && (
-            <div style={{ background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', padding: '0.75rem', borderRadius: '10px', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: 600 }}>
+            <div style={{ background: 'var(--accent-emerald-light)', border: '1px solid var(--accent-emerald)', padding: '0.85rem', borderRadius: '10px', color: 'var(--accent-emerald)', fontWeight: 600, marginBottom: '1rem', fontSize: '0.85rem' }}>
               {settingsMsg}
             </div>
           )}
 
           <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div>
-              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Farm Name</label>
-              <input type="text" value={farmName} onChange={(e) => setFarmName(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px' }} />
+              <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>Farm Name</label>
+              <input
+                type="text"
+                required
+                value={farmName}
+                onChange={(e) => setFarmName(e.target.value)}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
+              />
             </div>
 
             <div>
-              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Farm Location</label>
-              <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px' }} />
+              <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>Farm Location</label>
+              <input
+                type="text"
+                required
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
+              />
             </div>
 
             <div>
-              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Cattle Count</label>
-              <input type="number" value={cattleCount} onChange={(e) => setCattleCount(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px' }} />
+              <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>Cattle Count</label>
+              <input
+                type="number"
+                min="1"
+                value={cattleCount}
+                onChange={(e) => setCattleCount(e.target.value)}
+                style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
+              />
             </div>
 
-            <hr style={{ borderColor: 'var(--border-color)', margin: '0.5rem 0' }} />
-            <h4 style={{ fontSize: '0.95rem', fontWeight: 700 }}>Bank Account for Payouts</h4>
-
-            <div>
-              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Bank Name</label>
-              <input type="text" value={bankName} onChange={(e) => setBankName(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px' }} />
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '0.75rem' }}>Direct Bank Transfer Details</h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>Bank Name</label>
+                  <input
+                    type="text"
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value)}
+                    style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-muted)' }}>Account Number</label>
+                  <input
+                    type="text"
+                    value={accountNo}
+                    onChange={(e) => setAccountNo(e.target.value)}
+                    style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
+                  />
+                </div>
+              </div>
             </div>
 
-            <div>
-              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Account Number</label>
-              <input type="text" value={accountNo} onChange={(e) => setAccountNo(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px' }} />
-            </div>
-
-            <button type="submit" className="btn-primary" style={{ justifyContent: 'center', padding: '0.85rem' }}>
-              Save Profile Changes
+            <button
+              type="submit"
+              disabled={savingSettings}
+              className="btn-primary"
+              style={{ width: '100%', justifyContent: 'center', padding: '0.85rem', marginTop: '0.5rem' }}
+            >
+              {savingSettings ? (
+                <>
+                  <Loader2 size={18} className="pulse-anim" /> Saving Settings...
+                </>
+              ) : (
+                <>
+                  <Settings size={18} /> Save Settings & Bank Profile
+                </>
+              )}
             </button>
           </form>
         </div>
       )}
 
-      {/* QR Code Modal */}
-      {selectedQRBatch && (
-        <div className="modal-backdrop-custom" onClick={() => setSelectedQRBatch(null)}>
-          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
-              HEALTHYMILK DIGITAL CERTIFICATE
-            </div>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: '4px' }}>
-              Batch Traceability QR Code
-            </h3>
-            
-            <div 
-              style={{ margin: '1.25rem auto', width: '160px', height: '160px', borderRadius: '16px', border: '1px solid var(--border-color)', padding: '8px', background: '#FFF' }}
-              dangerouslySetInnerHTML={{ __html: renderQRCodeSVG(generateBatchQRData(selectedQRBatch), 144) }}
-            />
-
-            <div style={{ background: 'var(--bg-primary)', borderRadius: '12px', padding: '0.85rem', textAlign: 'left', fontSize: '0.82rem', marginBottom: '1.25rem' }}>
-              <div>Batch ID: <strong style={{ fontFamily: 'monospace', color: 'var(--accent-emerald)' }}>{selectedQRBatch.batchId || selectedQRBatch.id}</strong></div>
-              <div>Farmer: <strong>{selectedQRBatch.farmerName || farmerProfile?.farmName}</strong></div>
-              <div>Volume: <strong>{selectedQRBatch.liters} Liters</strong></div>
-              <div>Tested Fat / SNF: <strong>{selectedQRBatch.qualityTest ? `${selectedQRBatch.qualityTest.fatPercentage}% / ${selectedQRBatch.qualityTest.snfPercentage}%` : (selectedQRBatch.fatPercentage > 0 ? `${selectedQRBatch.fatPercentage}% / ${selectedQRBatch.snfPercentage}%` : 'Pending Inspection')}</strong></div>
-              <div>Temperature: <strong>{selectedQRBatch.qualityTest?.temperature || 4.0}°C</strong></div>
-              <div>Quality Status: <strong style={{ color: selectedQRBatch.status === 'Rejected' ? 'var(--accent-rose)' : 'var(--accent-emerald)' }}>{selectedQRBatch.status}</strong></div>
-            </div>
-
-            <button onClick={() => setSelectedQRBatch(null)} className="btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
-              Close Certificate
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Payout Withdrawal Modal */}
+      {/* MODAL: Payout Request */}
       {showPayoutModal && (
-        <div className="modal-backdrop-custom" onClick={() => setShowPayoutModal(false)}>
-          <div className="modal-dialog-custom" onClick={(e) => e.stopPropagation()}>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1rem' }}>Initiate Payout Withdrawal</h3>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
+          <div className="card" style={{ maxWidth: '440px', width: '100%' }}>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.5rem' }}>Request Bank Withdrawal</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+              Available Balance: <strong>₹{currentBalance}</strong>
+            </p>
 
             {payoutMsg && (
-              <div style={{ background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', padding: '0.65rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem', fontWeight: 600 }}>
+              <div style={{ padding: '0.75rem', borderRadius: '8px', background: 'var(--accent-emerald-light)', color: 'var(--accent-emerald)', fontSize: '0.85rem', marginBottom: '1rem', fontWeight: 600 }}>
                 {payoutMsg}
               </div>
             )}
 
             <form onSubmit={handlePayoutRequest} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
               <div>
-                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Withdrawal Amount (₹)</label>
-                <input type="number" required value={payoutAmount} onChange={(e) => setPayoutAmount(e.target.value)} style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', fontSize: '1.1rem', fontWeight: 800 }} />
-              </div>
-
-              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                Target Account: <strong>{farmerProfile?.bankDetails?.bankName || 'State Bank of India'} ({farmerProfile?.bankDetails?.accountNo || 'XXXX-8921'})</strong>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>Amount (₹)</label>
+                <input
+                  type="number"
+                  required
+                  min="100"
+                  max={currentBalance}
+                  value={payoutAmount}
+                  onChange={(e) => setPayoutAmount(e.target.value)}
+                  placeholder={`Max ₹${currentBalance}`}
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginTop: '4px', boxSizing: 'border-box' }}
+                />
               </div>
 
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                <button type="button" onClick={() => setShowPayoutModal(false)} className="btn-secondary" style={{ flex: 1, justifyContent: 'center' }}>
+                <button
+                  type="button"
+                  onClick={() => setShowPayoutModal(false)}
+                  className="btn-secondary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" style={{ flex: 1, justifyContent: 'center' }}>
-                  Confirm Payout
+                <button
+                  type="submit"
+                  disabled={submittingPayout || Number(payoutAmount) <= 0 || Number(payoutAmount) > currentBalance}
+                  className="btn-primary"
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
+                  {submittingPayout ? 'Processing...' : 'Confirm Withdrawal'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: QR Code View */}
+      {selectedQRBatch && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
+          <div className="card" style={{ maxWidth: '400px', width: '100%', textAlign: 'center' }}>
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.5rem' }}>Milk Batch QR Code</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+              Batch: <strong style={{ fontFamily: 'monospace', color: 'var(--accent-emerald)' }}>{selectedQRBatch.batchId || selectedQRBatch.id}</strong>
+            </p>
+
+            <div
+              style={{ display: 'flex', justifyContent: 'center', margin: '1rem 0' }}
+              dangerouslySetInnerHTML={{
+                __html: renderQRCodeSVG(generateBatchQRData(selectedQRBatch), 200)
+              }}
+            />
+
+            <button
+              onClick={() => setSelectedQRBatch(null)}
+              className="btn-primary"
+              style={{ width: '100%', justifyContent: 'center', marginTop: '1rem' }}
+            >
+              Close QR Code
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Batch Timeline Details */}
+      {selectedBatchDetails && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999, padding: '1rem' }}>
+          <div className="card" style={{ maxWidth: '520px', width: '100%', maxHeight: '80vh', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Batch Audit Timeline</h3>
+              <button
+                onClick={() => setSelectedBatchDetails(null)}
+                className="btn-secondary"
+                style={{ padding: '4px 8px', fontSize: '0.8rem' }}
+              >
+                Close
+              </button>
+            </div>
+
+            <div style={{ fontSize: '0.85rem', marginBottom: '1rem' }}>
+              Batch ID: <strong style={{ fontFamily: 'monospace', color: 'var(--accent-emerald)' }}>{selectedBatchDetails.batchId}</strong>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+              {(selectedBatchDetails.auditHistory || []).length > 0 ? (
+                selectedBatchDetails.auditHistory.map((item, idx) => (
+                  <div key={idx} style={{ padding: '0.75rem', borderRadius: '10px', background: 'var(--bg-primary)', fontSize: '0.82rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
+                      <span>{item.fromStatus} &rarr; {item.toStatus}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{new Date(item.changedAt).toLocaleTimeString()}</span>
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', marginTop: '2px' }}>Changed by: {item.changedBy}</div>
+                    {item.reason && <div style={{ marginTop: '2px', fontStyle: 'italic' }}>Reason: {item.reason}</div>}
+                  </div>
+                ))
+              ) : (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '1rem' }}>
+                  Initial collection status: <strong>{selectedBatchDetails.status}</strong>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

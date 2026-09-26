@@ -17,19 +17,18 @@ export const AuthProvider = ({ children }) => {
   });
 
   const [activeTab, setActiveTab] = useState('status');
-  const [initializing, setInitializing] = useState(true);
+  const [initializing, setInitializing] = useState(false);
 
-  // Refresh user profile session from server on initial load
+  // Refresh user profile session from server on initial load in background
   const refreshUserProfile = async () => {
     const curToken = localStorage.getItem('healthymilk_token');
     if (curToken) {
-      const data = await apiFetch('/api/auth/me');
-      if (data.success && data.user) {
+      const data = await apiFetch('/api/auth/me', { noCache: true });
+      if (data && data.success && data.user) {
         setUser(data.user);
         localStorage.setItem('healthymilk_user', JSON.stringify(data.user));
       }
     }
-    setInitializing(false);
   };
 
   useEffect(() => {
