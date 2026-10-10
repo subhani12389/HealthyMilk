@@ -1,22 +1,45 @@
 const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
 
 const userSchema = new mongoose.Schema({
+  email: {
+    type: String,
+    required: [true, 'Email is required'],
+    unique: true,
+    lowercase: true,
+    trim: true,
+    index: true
+  },
+  passwordHash: {
+    type: String,
+    required: [true, 'Password hash is required'],
+    select: false
+  },
+  name: {
+    type: String,
+    required: [true, 'Full name is required'],
+    trim: true,
+    default: 'HealthyMilk User'
+  },
+  role: {
+    type: String,
+    enum: ['farmer', 'consumer', 'delivery_agent', 'agent', 'admin'],
+    required: [true, 'User role is required'],
+    default: 'consumer'
+  },
   phoneNumber: {
     type: String,
-    required: [true, 'Phone number is required'],
-    unique: true,
-    trim: true
+    trim: true,
+    default: ''
   },
   countryCode: {
     type: String,
     default: '+91',
     trim: true
   },
-  role: {
-    type: String,
-    enum: ['farmer', 'consumer', 'delivery_agent', 'agent'],
-    required: [true, 'User role is required'],
-    default: 'consumer'
+  isEmailVerified: {
+    type: Boolean,
+    default: true
   },
   isPhoneVerified: {
     type: Boolean,
@@ -26,13 +49,17 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
-  name: {
+  lastLoginAt: {
+    type: Date,
+    default: null
+  },
+  resetPasswordToken: {
     type: String,
-    default: function() {
-      if (this.role === 'farmer') return 'Farmer User';
-      if (this.role === 'delivery_agent' || this.role === 'agent') return 'Delivery Agent';
-      return 'Consumer User';
-    }
+    select: false
+  },
+  resetPasswordExpires: {
+    type: Date,
+    select: false
   },
   // Additional role-specific fields for seamless HealthyMilk dashboard integration
   farmName: { type: String, default: '' },
@@ -42,42 +69,32 @@ const userSchema = new mongoose.Schema({
   location: { type: String, default: 'Kaira Valley, Anand' },
   cattleCount: { type: Number, default: 15 },
   balance: { type: Number, default: 0.00 },
+  totalDeliveries: { type: Number, default: 0, min: 0 },
   bankDetails: {
     accountNo: { type: String, default: 'XXXX-XXXX-1234' },
     ifsc: { type: String, default: 'SBIN0001234' },
     bankName: { type: String, default: 'State Bank of India' }
   },
-  subscription: {
-    type: Object,
-    default: function() {
-      return {
-        id: `sub_${Date.now()}`,
-        planName: 'Pure Fresh A2 Cow Milk',
-        dailyLiters: 2,
-        totalDays: 30,
-        daysRemaining: 30,
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-        status: 'Active',
-        pricePerLiter: 65,
-        totalAmountPaid: 3900,
-        deliveryTimeSlot: '6:30 AM - 7:30 AM'
-      };
-    }
-  }
+  subscription: { type: Object, default: null }
 }, {
   timestamps: true
 });
 
-// Explicit unique index for phoneNumber to enforce DB-level duplicate prevention
-userSchema.index({ phoneNumber: 1 }, { unique: true });
+// Compare candidate password with stored bcrypt hash
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.passwordHash || !candidatePassword) return false;
+  return bcrypt.compare(candidatePassword, this.passwordHash);
+};
 
 // Instance Method: Sanitize user object for API responses
 userSchema.methods.toAuthJSON = function() {
   const obj = this.toObject ? this.toObject() : { ...this };
   delete obj.__v;
+  delete obj.passwordHash;
+  delete obj.resetPasswordToken;
+  delete obj.resetPasswordExpires;
   obj.id = obj._id ? obj._id.toString() : obj.id;
-  obj.phone = obj.phoneNumber || obj.phone;
+  obj.phone = obj.phoneNumber || obj.phone || '';
   return obj;
 };
 

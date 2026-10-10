@@ -1,409 +1,550 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
-const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
-const { users, deliveryTasks, milkBatches, notifications } = require('../store');
+const User = require('../models/User');
+const Subscription = require('../models/Subscription');
+const Order = require('../models/Order');
+const Delivery = require('../models/Delivery');
+const { verifyToken, requireRole } = require('../middleware/authMiddleware');
+const { createNotification } = require('../services/notificationService');
+const { getPagination, paginationResult } = require('../utils/pagination');
+const { withMongoTransaction, respondToDatabaseWriteError } = require('../config/db');
+const { getIdempotencyKey, hashPayload } = require('../utils/idempotency');
+const { isSubscriptionScheduledForDate, normalizeScheduleDate } = require('../utils/subscriptionSchedule');
 
-// GET /api/consumer/dashboard?consumerId=
+const products = [
+  { id: 'p1', name: 'Pure Fresh A2 Cow Milk', price: 65, unit: 'Liter', description: 'Certified pure A2 indigenous organic cow milk.' },
+  { id: 'p2', name: 'Fresh Farm Buffalo Milk', price: 75, unit: 'Liter', description: 'Creamy 7.5% fat organic buffalo milk.' },
+  { id: 'p3', name: 'Desi Cow Bilona Ghee', price: 1200, unit: '500g', description: 'Traditional wooden churned cultured ghee.' },
+  { id: 'p4', name: 'Organic Probiotic Set Curd', price: 45, unit: '400g', description: 'Fresh cultured thick curd.' }
+];
+
+router.use(verifyToken, requireRole(['consumer']));
+
+const getCurrentSubscription = (consumerId) =>
+  Subscription.findOne({ consumerId, status: { $in: ['Active', 'Paused'] } }).sort({ createdAt: -1 });
+
+const formatSubscription = (subscription) => subscription ? ({
+  ...subscription.toObject(),
+  id: subscription.subscriptionId
+}) : null;
+
 router.get('/dashboard', async (req, res) => {
-  const { consumerId } = req.query;
-  let consumer = users.find(u => u.id === consumerId && u.role === 'consumer');
-  if (!consumer) {
-    consumer = users.find(u => u.role === 'consumer');
-  }
+  try {
+    const consumerId = req.user.id;
+    const { page, limit, skip } = getPagination(req.query, 20);
+    const consumer = await User.findById(consumerId).select('name address phoneNumber').lean();
+    if (!consumer) return res.status(404).json({ success: false, message: 'Consumer account not found.' });
+    const [subscription, totalItems, deliveries] = await Promise.all([
+      getCurrentSubscription(consumerId),
+      Delivery.countDocuments({ consumerId }),
+      Delivery.find({ consumerId })
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+    ]);
+    const currentDelivery = deliveries.find(delivery => !['Delivered', 'Cancelled'].includes(delivery.status));
+    const currentBatch = currentDelivery?.batchId
+      ? await MilkBatch.findOne({ batchId: currentDelivery.batchId })
+        .select('batchId farmerName farmName farmLocation agentName qualityTest')
+        .lean()
+      : null;
 
-  // Find latest accepted batch to show traceable quality to consumer
-  let activeBatch = null;
-  if (mongoose.connection.readyState === 1) {
-    try {
-      activeBatch = await MilkBatch.findOne({ status: { $in: ['Accepted', 'In Transit', 'Delivered'] } }).sort({ collectionDate: -1 }).lean();
-    } catch (e) {}
-  }
-
-  if (!activeBatch) {
-    activeBatch = milkBatches.find(b => b.status === 'Accepted' || b.status === 'In Transit' || b.status === 'Delivered') || milkBatches[0];
-  }
-
-  if (!consumer) {
     return res.json({
       success: true,
       consumer: {
-        id: 'new_consumer',
-        name: 'Consumer User',
-        email: 'consumer@example.com',
-        address: '123 Green Avenue, Sector 14',
-        phone: '9876543210',
-        subscription: {
-          id: 'sub_new',
-          planName: 'Pure Fresh A2 Cow Milk',
-          dailyLiters: 2,
-          totalDays: 30,
-          daysRemaining: 30,
-          startDate: new Date().toISOString().split('T')[0],
-          endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-          status: 'Active',
-          pricePerLiter: 65,
-          totalAmountPaid: 3900,
-          deliveryTimeSlot: '6:30 AM - 7:30 AM'
-        }
+        id: consumerId,
+        name: consumer.name,
+        address: consumer.address || '',
+        phone: consumer.phoneNumber,
+        subscription: formatSubscription(subscription)
       },
-      currentMilkStatus: {
-        deliveryId: 'del_101',
-        batchId: activeBatch ? activeBatch.batchId : 'HM-20260921-0001',
-        status: 'Active Plan Subscribed',
-        liters: 2,
-        milkType: 'Pure Fresh A2 Cow Milk',
-        timeSlot: '6:30 AM - 7:30 AM',
-        eta: '07:15 AM',
-        agentName: activeBatch?.agentName || 'Assigned Delivery Agent',
-        farmerName: activeBatch?.farmName || activeBatch?.farmerName || 'Local Organic Dairy Farm',
-        farmLocation: activeBatch?.farmLocation || 'Kaira Valley, Anand',
-        qualityDetails: {
-          fat: activeBatch?.qualityTest ? `${activeBatch.qualityTest.fatPercentage}%` : '4.8%',
-          snf: activeBatch?.qualityTest ? `${activeBatch.qualityTest.snfPercentage}%` : '8.9%',
-          lactometer: activeBatch?.qualityTest ? activeBatch.qualityTest.lactometerReading : 30.0,
-          temperature: activeBatch?.qualityTest ? `${activeBatch.qualityTest.temperature}°C Chilled` : '4°C Chilled',
-          purity: '100% Pure Organic & Lab Tested',
-          qualityScore: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityScore : 96,
-          qualityStatus: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityStatus : 'Passed',
-          testedAt: activeBatch?.qualityTest?.testedAt || new Date().toISOString(),
-          testedBy: activeBatch?.qualityTest?.testedBy || 'Certified Dairy Inspector'
-        }
-      },
-      history: []
+      currentMilkStatus: currentDelivery ? {
+        deliveryId: currentDelivery.deliveryId,
+        batchId: currentBatch?.batchId || '',
+        status: currentDelivery.status,
+        liters: currentDelivery.quantity,
+        milkType: subscription?.planName || 'Pure Fresh A2 Cow Milk',
+        timeSlot: currentDelivery.timeSlot || subscription?.deliveryTimeSlot || '',
+        eta: currentDelivery.eta,
+        agentName: '',
+        farmerName: currentBatch?.farmName || currentBatch?.farmerName || '',
+        farmLocation: currentBatch?.farmLocation || '',
+        qualityDetails: currentBatch?.qualityTest ? {
+          fat: `${currentBatch.qualityTest.fatPercentage}%`,
+          snf: `${currentBatch.qualityTest.snfPercentage}%`,
+          lactometer: currentBatch.qualityTest.lactometerReading,
+          temperature: `${currentBatch.qualityTest.temperature}°C`,
+          purity: 'Quality tested',
+          qualityScore: currentBatch.qualityTest.qualityScore,
+          qualityStatus: currentBatch.qualityTest.qualityStatus,
+          testedAt: currentBatch.qualityTest.testedAt,
+          testedBy: currentBatch.qualityTest.testedBy
+        } : null
+      } : null,
+      history: deliveries,
+      pagination: paginationResult(page, limit, totalItems)
     });
+  } catch (error) {
+    console.error('Error loading consumer dashboard:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load consumer dashboard.' });
   }
-
-  const todayTask = deliveryTasks.find(t => t.consumerId === consumer.id);
-  const history = deliveryTasks.filter(t => t.consumerId === consumer.id);
-
-  return res.json({
-    success: true,
-    consumer: {
-      id: consumer.id,
-      name: consumer.name,
-      email: consumer.email,
-      address: consumer.address || '123 Green Avenue, Sector 14',
-      phone: consumer.phone || consumer.mobile,
-      subscription: consumer.subscription || {
-        id: `sub_${consumer.id}`,
-        planName: 'Pure Fresh A2 Cow Milk',
-        dailyLiters: 2,
-        totalDays: 30,
-        daysRemaining: 30,
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-        status: 'Active',
-        pricePerLiter: 65,
-        totalAmountPaid: 3900,
-        deliveryTimeSlot: '6:30 AM - 7:30 AM'
-      }
-    },
-    currentMilkStatus: {
-      deliveryId: todayTask ? todayTask.id : `del_${Date.now()}`,
-      batchId: activeBatch ? activeBatch.batchId : 'HM-20260921-0001',
-      status: todayTask ? todayTask.status : 'Out for Delivery',
-      liters: consumer.subscription ? consumer.subscription.dailyLiters : 2,
-      milkType: consumer.subscription ? consumer.subscription.planName : 'Pure A2 Cow Milk',
-      timeSlot: consumer.subscription ? consumer.subscription.deliveryTimeSlot : '6:30 AM - 7:30 AM',
-      eta: todayTask ? (todayTask.eta || '07:15 AM') : '07:15 AM',
-      agentName: activeBatch?.agentName || (todayTask ? (todayTask.agentName || 'Delivery Agent') : 'Assigned Agent'),
-      farmerName: activeBatch?.farmName || activeBatch?.farmerName || 'Local Dairy Farm',
-      farmLocation: activeBatch?.farmLocation || 'Kaira Valley, Anand',
-      qualityDetails: {
-        fat: activeBatch?.qualityTest ? `${activeBatch.qualityTest.fatPercentage}%` : '4.8%',
-        snf: activeBatch?.qualityTest ? `${activeBatch.qualityTest.snfPercentage}%` : '8.9%',
-        lactometer: activeBatch?.qualityTest ? activeBatch.qualityTest.lactometerReading : 30.0,
-        temperature: activeBatch?.qualityTest ? `${activeBatch.qualityTest.temperature}°C Chilled` : '4°C Chilled',
-        purity: '100% Pure Organic & Lab Tested',
-        qualityScore: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityScore : 96,
-        qualityStatus: activeBatch?.qualityTest ? activeBatch.qualityTest.qualityStatus : 'Passed',
-        testedAt: activeBatch?.qualityTest?.testedAt || new Date().toISOString(),
-        testedBy: activeBatch?.qualityTest?.testedBy || 'Certified Dairy Inspector'
-      }
-    },
-    history
-  });
 });
 
-// POST /api/consumer/pause-subscription
-router.post('/pause-subscription', async (req, res) => {
-  const { consumerId } = req.body;
-  let consumer = null;
-  if (mongoose.connection.readyState === 1) {
-    try {
-      consumer = await User.findById(consumerId);
-    } catch (e) {}
-  }
-  if (!consumer) {
-    consumer = users.find(u => u.id === consumerId || u._id === consumerId) || users.find(u => u.role === 'consumer');
-  }
+router.get('/products', (req, res) =>
+  res.json({ success: true, count: products.length, products }));
 
-  if (!consumer) {
-    return res.status(404).json({ success: false, message: 'Consumer account not found.' });
-  }
-
-  if (!consumer.subscription) {
-    consumer.subscription = {
-      id: `sub_${consumer.id || consumer._id || Date.now()}`,
-      planName: 'Pure Fresh A2 Cow Milk',
-      dailyLiters: 2,
-      totalDays: 30,
-      daysRemaining: 30,
-      startDate: new Date().toISOString().split('T')[0],
-      endDate: new Date(Date.now() + 30 * 86400000).toISOString().split('T')[0],
-      status: 'Active',
-      pricePerLiter: 65,
-      totalAmountPaid: 3900,
-      deliveryTimeSlot: '6:30 AM - 7:30 AM'
-    };
-  }
-
-  const currentStatus = consumer.subscription.status || 'Active';
-  const newStatus = currentStatus === 'Active' ? 'Paused' : 'Active';
-  consumer.subscription.status = newStatus;
-
-  if (consumer.save && mongoose.connection.readyState === 1) {
-    try {
-      consumer.markModified('subscription');
-      await consumer.save();
-    } catch (e) {}
-  }
-
-  notifications.unshift({
-    id: `notif_${Date.now()}`,
-    userId: consumer.id || (consumer._id ? consumer._id.toString() : 'consumer'),
-    title: `Subscription ${newStatus}`,
-    message: `Your daily milk subscription has been ${newStatus.toLowerCase()}.`,
-    time: 'Just now',
-    read: false,
-    type: newStatus === 'Active' ? 'success' : 'warning'
-  });
-
-  return res.json({
-    success: true,
-    message: `Subscription successfully ${newStatus.toLowerCase()}!`,
-    subscription: consumer.subscription
-  });
-});
-
-// POST /api/consumer/update-quantity
-router.post('/update-quantity', async (req, res) => {
-  const { consumerId, dailyLiters } = req.body;
-  let consumer = null;
-  if (mongoose.connection.readyState === 1) {
-    try {
-      consumer = await User.findById(consumerId);
-    } catch (e) {}
-  }
-  if (!consumer) {
-    consumer = users.find(u => u.id === consumerId || u._id === consumerId) || users.find(u => u.role === 'consumer');
-  }
-
-  if (!consumer) {
-    return res.status(404).json({ success: false, message: 'Consumer account not found.' });
-  }
-
-  const qty = parseFloat(dailyLiters);
-  if (!qty || qty <= 0) {
-    return res.status(400).json({ success: false, message: 'Invalid daily quantity.' });
-  }
-
-  if (!consumer.subscription) {
-    consumer.subscription = {
-      id: `sub_${consumer.id || Date.now()}`,
-      planName: 'Pure Fresh A2 Cow Milk',
-      dailyLiters: qty,
-      totalDays: 30,
-      daysRemaining: 30,
-      status: 'Active',
-      pricePerLiter: 65,
-      totalAmountPaid: 3900,
-      deliveryTimeSlot: '6:30 AM - 7:30 AM'
-    };
-  } else {
-    consumer.subscription.dailyLiters = qty;
-  }
-
-  if (consumer.save && mongoose.connection.readyState === 1) {
-    try {
-      consumer.markModified('subscription');
-      await consumer.save();
-    } catch (e) {}
-  }
-
-  return res.json({
-    success: true,
-    message: `Daily milk quantity updated to ${qty} Liters/day.`,
-    subscription: consumer.subscription
-  });
-});
-
-// POST /api/consumer/renew-subscription
-router.post('/renew-subscription', (req, res) => {
-  const { consumerId, planDays } = req.body;
-  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
-
-  if (!consumer || !consumer.subscription) {
-    return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
-  }
-
-  const days = parseInt(planDays) || 30;
-  consumer.subscription.daysRemaining = days;
-  consumer.subscription.totalDays = days;
-  consumer.subscription.status = 'Active';
-  consumer.subscription.startDate = new Date().toISOString().split('T')[0];
-  consumer.subscription.endDate = new Date(Date.now() + days * 86400000).toISOString().split('T')[0];
-
-  notifications.unshift({
-    id: `notif_${Date.now()}`,
-    userId: consumer.id,
-    title: 'Subscription Renewed!',
-    message: `Your ${days}-day plan has been renewed. Full ${days} days remaining.`,
-    time: 'Just now',
-    read: false,
-    type: 'success'
-  });
-
-  return res.json({
-    success: true,
-    message: `Subscription renewed successfully for ${days} days!`,
-    subscription: consumer.subscription
-  });
-});
-
-// POST /api/consumer/simulate-delivery-day
-router.post('/simulate-delivery-day', (req, res) => {
-  const { consumerId } = req.body;
-  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
-
-  if (!consumer || !consumer.subscription) {
-    return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
-  }
-
-  if (consumer.subscription.daysRemaining > 0 && consumer.subscription.status === 'Active') {
-    consumer.subscription.daysRemaining -= 1;
-    if (consumer.subscription.daysRemaining === 0) {
-      consumer.subscription.status = 'Expired';
+router.put('/settings', async (req, res) => {
+  try {
+    const { address, deliveryTimeSlot } = req.body;
+    const updates = {};
+    if (typeof address === 'string') updates.address = address.trim();
+    const consumer = await User.findByIdAndUpdate(req.user.id, { $set: updates }, {
+      returnDocument: 'after',
+      runValidators: true
+    });
+    if (!consumer) return res.status(404).json({ success: false, message: 'Consumer account not found.' });
+    if (typeof deliveryTimeSlot === 'string') {
+      await Subscription.updateOne(
+        { consumerId: req.user.id, status: { $in: ['Active', 'Paused'] } },
+        { $set: { deliveryTimeSlot: deliveryTimeSlot.trim() } }
+      );
     }
+    return res.json({ success: true, message: 'Delivery settings saved.', consumer: consumer.toAuthJSON() });
+  } catch (error) {
+    console.error('Error updating consumer settings:', error);
+    return res.status(500).json({ success: false, message: 'Unable to update consumer settings.' });
   }
-
-  notifications.unshift({
-    id: `notif_${Date.now()}`,
-    userId: consumer.id,
-    title: 'Daily Milk Delivered & Day Deducted',
-    message: `Today's ${consumer.subscription.dailyLiters}L milk delivered! ${consumer.subscription.daysRemaining} days remaining in your plan.`,
-    time: 'Just now',
-    read: false,
-    type: 'info'
-  });
-
-  return res.json({
-    success: true,
-    message: 'Simulated 1 day delivery deduction!',
-    daysRemaining: consumer.subscription.daysRemaining,
-    status: consumer.subscription.status
-  });
 });
 
-// GET /api/consumer/products - Products Catalog
-router.get('/products', (req, res) => {
-  const products = [
-    { id: 'p1', name: 'Pure Fresh A2 Cow Milk', price: 65, unit: 'Liter', description: 'Certified pure A2 indigenous organic cow milk.' },
-    { id: 'p2', name: 'Fresh Farm Buffalo Milk', price: 75, unit: 'Liter', description: 'Creamy 7.5% fat organic buffalo milk.' },
-    { id: 'p3', name: 'Desi Cow Bilona Ghee', price: 1200, unit: '500g', description: 'Traditional wooden churned cultured ghee.' },
-    { id: 'p4', name: 'Organic Probiotic Set Curd', price: 45, unit: '400g', description: 'Fresh cultured thick curd.' }
-  ];
-  return res.json({ success: true, count: products.length, products });
-});
-
-// POST /api/consumer/subscription - Create or Update Subscription
-router.post('/subscription', (req, res) => {
-  const { consumerId, plan, quantity, productType, deliveryTime } = req.body;
-  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
-  
-  const subData = {
-    id: `sub_${consumerId || Date.now()}`,
-    planName: productType || 'Pure Fresh A2 Cow Milk',
-    planType: plan || 'Daily',
-    dailyLiters: Number(quantity) || 2,
-    totalDays: 30,
-    daysRemaining: 30,
-    status: 'Active',
-    pricePerLiter: 65,
-    deliveryTimeSlot: deliveryTime || '6:30 AM - 7:30 AM',
-    startDate: new Date().toISOString().split('T')[0]
-  };
-
-  if (consumer) {
-    consumer.subscription = subData;
+router.post('/subscription', async (req, res) => {
+  try {
+    const { plan, quantity, productType, deliveryTime } = req.body;
+    const dailyLiters = Number(quantity ?? 2);
+    if (!Number.isFinite(dailyLiters) || dailyLiters <= 0 || dailyLiters > 50) {
+      return res.status(400).json({ success: false, message: 'Daily quantity must be between 0 and 50 liters.' });
+    }
+    const now = new Date();
+    const totalDays = 30;
+    const subscriptionId = `SUB-${crypto.randomUUID()}`;
+    const user = await User.findById(req.user.id).select('address');
+    if (!user) return res.status(404).json({ success: false, message: 'Consumer account not found.' });
+    let subscription = await getCurrentSubscription(req.user.id);
+    if (!subscription) {
+      subscription = new Subscription({
+        subscriptionId,
+        consumerId: req.user.id
+      });
+    }
+    subscription.planName = productType || products[0].name;
+    subscription.planType = plan || 'Daily';
+    subscription.dailyLiters = dailyLiters;
+    subscription.totalDays = totalDays;
+    subscription.daysRemaining = totalDays;
+    subscription.status = 'Active';
+    subscription.schedule = plan || 'Daily';
+    subscription.pricePerLiter = products[0].price;
+    subscription.deliveryTimeSlot = deliveryTime || '6:30 AM - 7:30 AM';
+    subscription.deliveryAddress = user.address;
+    subscription.startDate = now;
+    subscription.endDate = new Date(now.getTime() + totalDays * 86400000);
+    await subscription.save();
+    return res.status(201).json({
+      success: true,
+      message: 'Subscription plan created successfully!',
+      subscription: formatSubscription(subscription)
+    });
+  } catch (error) {
+    console.error('Error creating subscription:', error);
+    return res.status(500).json({ success: false, message: 'Unable to create subscription.' });
   }
-
-  return res.json({
-    success: true,
-    message: 'Subscription plan created successfully!',
-    subscription: subData
-  });
 });
 
-// POST /api/consumer/subscription/pause
-router.post('/subscription/pause', (req, res) => {
-  const { consumerId } = req.body;
-  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
-  if (consumer && consumer.subscription) {
-    consumer.subscription.status = 'Paused';
+async function setSubscriptionStatus(req, res, status) {
+  try {
+    const current = await getCurrentSubscription(req.user.id);
+    if (!current) return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
+    if (current.status === status) {
+      return res.json({
+        success: true,
+        message: `Subscription is already ${status.toLowerCase()}.`,
+        subscription: formatSubscription(current),
+        unchanged: true
+      });
+    }
+    if ((status === 'Paused' && current.status !== 'Active') ||
+        (status === 'Active' && current.status !== 'Paused')) {
+      return res.status(409).json({ success: false, message: `Subscription cannot be changed from ${current.status}.` });
+    }
+
+    const now = new Date();
+    const updates = status === 'Paused'
+      ? { status, pauseStartDate: now, pauseEndDate: null }
+      : { status, resumeDate: now, pauseStartDate: null, pauseEndDate: null };
+    const subscription = await Subscription.findOneAndUpdate(
+      { _id: current._id, consumerId: req.user.id, status: status === 'Paused' ? 'Active' : 'Paused' },
+      { $set: updates },
+      { returnDocument: 'after', runValidators: true }
+    );
+    if (!subscription) {
+      const latest = await getCurrentSubscription(req.user.id);
+      if (latest?.status === status) {
+        return res.json({
+          success: true,
+          message: `Subscription is already ${status.toLowerCase()}.`,
+          subscription: formatSubscription(latest),
+          unchanged: true
+        });
+      }
+      return res.status(409).json({ success: false, message: 'Subscription changed; refresh and retry.' });
+    }
+    await createNotification({
+      userId: req.user.id,
+      role: 'consumer',
+      title: `Subscription ${status}`,
+      message: `Your milk subscription has been ${status.toLowerCase()}.`,
+      type: status === 'Active' ? 'success' : 'warning'
+    });
+    return res.json({
+      success: true,
+      message: `Subscription successfully ${status.toLowerCase()}!`,
+      subscription: formatSubscription(subscription)
+    });
+  } catch (error) {
+    console.error(`Error setting subscription ${status.toLowerCase()}:`, error);
+    return res.status(500).json({ success: false, message: 'Unable to update subscription.' });
   }
-  return res.json({
-    success: true,
-    message: 'Subscription paused successfully.',
-    subscription: consumer ? consumer.subscription : { status: 'Paused' }
-  });
-});
+}
 
-// POST /api/consumer/subscription/resume
-router.post('/subscription/resume', (req, res) => {
-  const { consumerId } = req.body;
-  const consumer = users.find(u => u.id === consumerId) || users.find(u => u.role === 'consumer');
-  if (consumer && consumer.subscription) {
-    consumer.subscription.status = 'Active';
+router.post('/pause-subscription', async (req, res) => {
+  try {
+    const subscription = await getCurrentSubscription(req.user.id);
+    if (!subscription) return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
+    return setSubscriptionStatus(req, res, subscription.status === 'Active' ? 'Paused' : 'Active');
+  } catch (error) {
+    console.error('Error toggling consumer subscription:', error);
+    return res.status(500).json({ success: false, message: 'Unable to update subscription.' });
   }
-  return res.json({
-    success: true,
-    message: 'Subscription resumed successfully.',
-    subscription: consumer ? consumer.subscription : { status: 'Active' }
-  });
 });
 
-// POST /api/consumer/order - Instant Dairy Order
-router.post('/order', (req, res) => {
-  const { consumerId, items, deliveryAddress, paymentMethod } = req.body;
-  const orderId = `HM-ORD-${Date.now().toString().slice(-6)}`;
-  const order = {
-    orderId,
-    consumerId,
-    items: items || [],
-    deliveryAddress: deliveryAddress || '123 Green Avenue',
-    paymentMethod: paymentMethod || 'UPI',
-    status: 'Confirmed',
-    totalAmount: (items || []).reduce((acc, c) => acc + (c.price * c.quantity), 0),
-    orderDate: new Date().toISOString()
-  };
+router.post('/subscription/pause', (req, res) => setSubscriptionStatus(req, res, 'Paused'));
+router.post('/subscription/resume', (req, res) => setSubscriptionStatus(req, res, 'Active'));
 
-  notifications.unshift({
-    id: `notif_${Date.now()}`,
-    userId: consumerId,
-    title: 'Order Confirmed',
-    message: `Order #${orderId} placed successfully. Tracking available soon.`,
-    time: 'Just now',
-    read: false,
-    type: 'success'
-  });
+router.post('/update-quantity', async (req, res) => {
+  try {
+    const dailyLiters = Number(req.body.dailyLiters);
+    if (!Number.isFinite(dailyLiters) || dailyLiters <= 0 || dailyLiters > 50) {
+      return res.status(400).json({ success: false, message: 'Daily quantity must be between 0 and 50 liters.' });
+    }
+    const subscription = await getCurrentSubscription(req.user.id);
+    if (!subscription) return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
+    subscription.dailyLiters = dailyLiters;
+    await subscription.save();
+    return res.json({
+      success: true,
+      message: `Daily milk quantity updated to ${dailyLiters} Liters/day.`,
+      subscription: formatSubscription(subscription)
+    });
+  } catch (error) {
+    console.error('Error updating subscription quantity:', error);
+    return res.status(500).json({ success: false, message: 'Unable to update subscription quantity.' });
+  }
+});
 
-  return res.json({
-    success: true,
-    message: 'Order placed successfully!',
-    order
-  });
+router.post('/renew-subscription', async (req, res) => {
+  try {
+    const planDays = Number.parseInt(req.body.planDays, 10) || 30;
+    if (planDays < 1 || planDays > 365) {
+      return res.status(400).json({ success: false, message: 'Subscription length must be between 1 and 365 days.' });
+    }
+    const subscription = await getCurrentSubscription(req.user.id);
+    if (!subscription) return res.status(404).json({ success: false, message: 'Consumer subscription not found.' });
+    const now = new Date();
+    subscription.daysRemaining = planDays;
+    subscription.totalDays = planDays;
+    subscription.status = 'Active';
+    subscription.startDate = now;
+    subscription.endDate = new Date(now.getTime() + planDays * 86400000);
+    await subscription.save();
+    await createNotification({
+      userId: req.user.id,
+      role: 'consumer',
+      title: 'Subscription Renewed',
+      message: `Your ${planDays}-day subscription was renewed.`,
+      type: 'success'
+    });
+    return res.json({
+      success: true,
+      message: `Subscription renewed successfully for ${planDays} days!`,
+      subscription: formatSubscription(subscription)
+    });
+  } catch (error) {
+    console.error('Error renewing subscription:', error);
+    return res.status(500).json({ success: false, message: 'Unable to renew subscription.' });
+  }
+});
+
+router.post('/simulate-delivery-day', async (req, res) => {
+  try {
+    const now = typeof req.app.locals.testClock === 'function'
+      ? new Date(req.app.locals.testClock())
+      : new Date();
+    const scheduledDate = normalizeScheduleDate(now);
+    const subscription = await getCurrentSubscription(req.user.id);
+    if (!subscription || subscription.status !== 'Active') {
+      const existingToday = await Delivery.findOne({
+        consumerId: req.user.id,
+        subscriptionId: { $ne: '' },
+        scheduledDate
+      });
+      if (existingToday) {
+        return res.json({
+          success: true,
+          message: 'This subscription delivery was already recorded for today.',
+          delivery: existingToday,
+          daysRemaining: 0,
+          status: 'Expired',
+          duplicate: true
+        });
+      }
+      return res.status(409).json({ success: false, message: 'No active subscription delivery is due.' });
+    }
+    const existingDelivery = await Delivery.findOne({
+      subscriptionId: subscription.subscriptionId,
+      scheduledDate
+    });
+    if (existingDelivery) {
+      return res.json({
+        success: true,
+        message: 'This subscription delivery was already recorded for today.',
+        delivery: existingDelivery,
+        daysRemaining: subscription.daysRemaining,
+        status: subscription.status,
+        duplicate: true
+      });
+    }
+    if (!isSubscriptionScheduledForDate(subscription, scheduledDate)) {
+      return res.status(409).json({ success: false, message: 'Today is not a scheduled delivery day for this subscription.' });
+    }
+    const result = await withMongoTransaction(async session => {
+      const existingInTransaction = await Delivery.findOne({
+        subscriptionId: subscription.subscriptionId,
+        scheduledDate
+      }).session(session);
+      if (existingInTransaction) {
+        const current = await Subscription.findById(subscription._id).session(session);
+        return { delivery: existingInTransaction, subscription: current, duplicate: true };
+      }
+
+      const current = await Subscription.findOne({
+        _id: subscription._id,
+        consumerId: req.user.id,
+        status: 'Active',
+        daysRemaining: { $gt: 0 },
+        lastDeliveryDate: { $ne: scheduledDate }
+      }).session(session);
+      if (!current) {
+        const recorded = await Delivery.findOne({
+          subscriptionId: subscription.subscriptionId,
+          scheduledDate
+        }).session(session);
+        if (recorded) {
+          const latestSub = await Subscription.findById(subscription._id).session(session);
+          return { delivery: recorded, subscription: latestSub, duplicate: true };
+        }
+        return null;
+      }
+      const user = await User.findById(req.user.id).select('address').session(session);
+      if (!user) throw new Error('Consumer account is unavailable.');
+
+      const updatedSubscription = await Subscription.findOneAndUpdate({
+        _id: current._id,
+        consumerId: req.user.id,
+        status: 'Active',
+        daysRemaining: current.daysRemaining,
+        lastDeliveryDate: { $ne: scheduledDate }
+      }, {
+        $inc: { daysRemaining: -1 },
+        $set: {
+          lastDeliveryDate: scheduledDate,
+          ...(current.daysRemaining === 1 ? { status: 'Expired' } : {})
+        }
+      }, { returnDocument: 'after', session });
+      if (!updatedSubscription) return null;
+
+      const [delivery] = await Delivery.create([{
+        deliveryId: `DEL-${crypto.randomUUID()}`,
+        consumerId: req.user.id,
+        subscriptionId: current.subscriptionId,
+        scheduledDate,
+        deliveryAddress: current.deliveryAddress || user.address,
+        quantity: current.dailyLiters,
+        timeSlot: current.deliveryTimeSlot,
+        status: 'Delivered',
+        deliveredAt: now,
+        tracking: [{ status: 'Delivered', changedAt: now, changedBy: req.user.id }]
+      }], { session, ordered: true });
+      await createNotification({
+        userId: req.user.id,
+        role: 'consumer',
+        title: 'Milk Delivered',
+        message: `Today's ${current.dailyLiters}L delivery is recorded. ${updatedSubscription.daysRemaining} days remain.`,
+        type: 'info',
+        session
+      });
+      return { delivery, subscription: updatedSubscription, duplicate: false };
+    });
+    if (!result) {
+      const latest = await getCurrentSubscription(req.user.id);
+      if (!latest || latest.status !== 'Active') {
+        return res.status(409).json({ success: false, message: 'The subscription is paused, expired, or has no delivery days remaining.' });
+      }
+      return res.status(409).json({ success: false, message: 'A delivery was already recorded for this subscription today.' });
+    }
+    return res.json({
+      success: true,
+      message: result.duplicate
+        ? 'This subscription delivery was already recorded for today.'
+        : 'Delivery recorded and subscription day deducted.',
+      delivery: result.delivery,
+      daysRemaining: result.subscription.daysRemaining,
+      status: result.subscription.status,
+      ...(result.duplicate ? { duplicate: true } : {})
+    });
+  } catch (error) {
+    return respondToDatabaseWriteError(res, error, 'Unable to record delivery.');
+  }
+});
+
+router.get('/orders', async (req, res) => {
+  try {
+    const { page, limit, skip } = getPagination(req.query);
+    const [orders, totalItems] = await Promise.all([
+      Order.find({ consumerId: req.user.id }).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+      Order.countDocuments({ consumerId: req.user.id })
+    ]);
+    return res.json({ success: true, orders, pagination: paginationResult(page, limit, totalItems) });
+  } catch (error) {
+    console.error('Error loading consumer order history:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load orders.' });
+  }
+});
+
+router.post('/order', async (req, res) => {
+  let idempotencyKey;
+  let requestHash;
+  try {
+    const { items, deliveryAddress, paymentMethod, deliveryDate } = req.body;
+    if (!Array.isArray(items) || items.length === 0 || items.length > 20) {
+      return res.status(400).json({ success: false, message: 'Select at least one valid product.' });
+    }
+    const orderItems = [];
+    for (const item of items) {
+      const product = products.find(candidate => candidate.id === item.productId);
+      const quantity = Number(item.quantity);
+      if (!product || !Number.isFinite(quantity) || quantity <= 0 || quantity > 100) {
+        return res.status(400).json({ success: false, message: 'Order contains an invalid product or quantity.' });
+      }
+      orderItems.push({
+        productId: product.id,
+        name: product.name,
+        quantity,
+        price: product.price,
+        total: product.price * quantity
+      });
+    }
+    const user = await User.findById(req.user.id).select('address');
+    const address = typeof deliveryAddress === 'string' ? deliveryAddress.trim() : user?.address;
+    if (!address) return res.status(400).json({ success: false, message: 'A delivery address is required.' });
+    const deliveryWhen = deliveryDate ? new Date(deliveryDate) : new Date(Date.now() + 86400000);
+    if (Number.isNaN(deliveryWhen.getTime())) {
+      return res.status(400).json({ success: false, message: 'A valid delivery date is required.' });
+    }
+    idempotencyKey = getIdempotencyKey(req, req.user.id, 'consumer-order');
+    if (!idempotencyKey) {
+      return res.status(400).json({ success: false, message: 'A valid Idempotency-Key header is required.' });
+    }
+    requestHash = hashPayload({
+      items: orderItems,
+      deliveryAddress: address,
+      paymentMethod: paymentMethod || 'UPI',
+      deliveryDate: deliveryDate ? deliveryWhen.toISOString() : null
+    });
+    const existingOrder = await Order.findOne({ consumerId: req.user.id, idempotencyKey });
+    if (existingOrder) {
+      if (existingOrder.requestHash !== requestHash) {
+        return res.status(409).json({ success: false, message: 'This request key was already used for a different order.' });
+      }
+      const existingDelivery = await Delivery.findOne({ orderId: existingOrder.orderId });
+      if (!existingDelivery) {
+        return res.status(503).json({ success: false, message: 'The order is being recovered; please retry shortly.' });
+      }
+      return res.json({
+        success: true,
+        message: 'Order was already placed.',
+        order: existingOrder,
+        delivery: existingDelivery
+      });
+    }
+    const totalAmount = orderItems.reduce((sum, item) => sum + item.total, 0);
+    const orderId = `HM-ORD-${crypto.randomUUID()}`;
+    const createdAt = new Date();
+    const { order, delivery } = await withMongoTransaction(async session => {
+      const [createdOrder] = await Order.create([{
+        orderId,
+        consumerId: req.user.id,
+        idempotencyKey,
+        requestHash,
+        items: orderItems,
+        quantity: orderItems.reduce((sum, item) => sum + item.quantity, 0),
+        price: totalAmount / orderItems.reduce((sum, item) => sum + item.quantity, 0),
+        totalAmount,
+        deliveryDate: deliveryWhen,
+        deliveryAddress: address,
+        paymentMethod: paymentMethod || 'UPI',
+        status: 'Confirmed',
+        tracking: [{ status: 'Confirmed', changedAt: createdAt, changedBy: req.user.id }]
+      }], { session, ordered: true });
+      const [createdDelivery] = await Delivery.create([{
+        deliveryId: `DEL-${crypto.randomUUID()}`,
+        consumerId: req.user.id,
+        orderId,
+        deliveryAddress: address,
+        quantity: orderItems.reduce((sum, item) => sum + item.quantity, 0),
+        status: 'Pending',
+        tracking: [{ status: 'Pending', changedAt: createdAt, changedBy: req.user.id }]
+      }], { session, ordered: true });
+      await createNotification({
+        userId: req.user.id,
+        role: 'consumer',
+        title: 'Order Confirmed',
+        message: `Order ${orderId} was placed successfully.`,
+        type: 'success',
+        session
+      });
+      return { order: createdOrder, delivery: createdDelivery };
+    });
+    return res.status(201).json({ success: true, message: 'Order placed successfully!', order, delivery });
+  } catch (error) {
+    if (error.code === 11000 && idempotencyKey) {
+      const existingOrder = await Order.findOne({ consumerId: req.user.id, idempotencyKey });
+      if (existingOrder?.requestHash === requestHash) {
+        const existingDelivery = await Delivery.findOne({ orderId: existingOrder.orderId });
+        if (existingDelivery) {
+          return res.json({
+            success: true,
+            message: 'Order was already placed.',
+            order: existingOrder,
+            delivery: existingDelivery
+          });
+        }
+      }
+      return res.status(409).json({ success: false, message: 'This request key was already used for another order.' });
+    }
+    return respondToDatabaseWriteError(res, error, 'Unable to place order.');
+  }
 });
 
 module.exports = router;

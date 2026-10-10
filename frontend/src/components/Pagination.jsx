@@ -13,18 +13,24 @@ export default function Pagination({
   const startItem = (currentPage - 1) * pageSize + 1;
   const endItem = Math.min(currentPage * pageSize, totalItems);
 
-  // Generate page numbers with window
   const pages = [];
-  for (let i = 1; i <= totalPages; i++) {
-    if (
-      i === 1 ||
-      i === totalPages ||
-      (i >= currentPage - 1 && i <= currentPage + 1)
-    ) {
-      pages.push(i);
-    } else if (pages[pages.length - 1] !== '...') {
-      pages.push('...');
+  const addPage = (page) => {
+    if (pages[pages.length - 1] !== page) pages.push(page);
+  };
+  const addEllipsis = () => {
+    if (pages[pages.length - 1] !== '...') pages.push('...');
+  };
+
+  if (totalPages <= 5) {
+    for (let page = 1; page <= totalPages; page += 1) addPage(page);
+  } else {
+    addPage(1);
+    if (currentPage > 3) addEllipsis();
+    for (let page = Math.max(2, currentPage - 1); page <= Math.min(totalPages - 1, currentPage + 1); page += 1) {
+      addPage(page);
     }
+    if (currentPage < totalPages - 2) addEllipsis();
+    addPage(totalPages);
   }
 
   return (

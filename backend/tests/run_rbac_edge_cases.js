@@ -1,10 +1,18 @@
 const http = require('http');
-const path = require('path');
-const app = require('../src/server');
+const crypto = require('crypto');
+const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
+const { prepareTestDatabase } = require('./testDatabase');
+const User = require('../src/models/User');
+const MilkBatch = require('../src/models/MilkBatch');
 
 let server;
+let app;
 const PORT = 5098;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
+let authToken = '';
+
+const idempotencyHeaders = () => ({ 'Idempotency-Key': crypto.randomUUID() });
 
 function request(method, path, body = null, headers = {}) {
   return new Promise((resolve, reject) => {
@@ -12,6 +20,7 @@ function request(method, path, body = null, headers = {}) {
     const postData = body ? JSON.stringify(body) : null;
     const reqHeaders = {
       'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       ...headers
     };
     if (postData) {
@@ -62,11 +71,68 @@ async function runEdgeCases() {
   console.log('🛡️ Starting HealthyMilk RBAC & Edge Cases Security Audit');
   console.log('===============================================================');
 
-  await new Promise((resolve) => {
-    server = app.listen(PORT, resolve);
-  });
-
   try {
+    process.env.ALLOW_STANDALONE_TRANSACTIONS = 'true';
+    await prepareTestDatabase();
+    const defaultHash = 'mock_hashed_password';
+    const testFarmer = await User.create({
+      email: 'rbac_farmer@healthymilk.test',
+      passwordHash: defaultHash,
+      phoneNumber: '9876541098',
+      role: 'farmer',
+      name: 'RBAC Test Farmer'
+    });
+    const farmerId = testFarmer._id.toString();
+    const testAgent = await User.create({
+      email: 'rbac_agent@healthymilk.test',
+      passwordHash: defaultHash,
+      phoneNumber: '9876541097',
+      role: 'delivery_agent',
+      name: 'RBAC Test Agent'
+    });
+    const testConsumer = await User.create({
+      email: 'rbac_consumer@healthymilk.test',
+      passwordHash: defaultHash,
+      phoneNumber: '9876541096',
+      role: 'consumer',
+      name: 'RBAC Test Consumer'
+    });
+    const testAdmin = await User.create({
+      email: 'rbac_admin@healthymilk.test',
+      passwordHash: defaultHash,
+      phoneNumber: '9876541095',
+      role: 'admin',
+      name: 'RBAC Test Admin'
+    });
+    const tokens = {
+      farmer: jwt.sign({ id: farmerId, email: testFarmer.email, role: 'farmer' }, process.env.JWT_SECRET, { expiresIn: '1h' }),
+      agent: jwt.sign({ id: testAgent._id.toString(), email: testAgent.email, role: 'delivery_agent' }, process.env.JWT_SECRET, { expiresIn: '1h' }),
+      consumer: jwt.sign({ id: testConsumer._id.toString(), email: testConsumer.email, role: 'consumer' }, process.env.JWT_SECRET, { expiresIn: '1h' }),
+      admin: jwt.sign({ id: testAdmin._id.toString(), email: testAdmin.email, role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '1h' })
+    };
+    authToken = '';
+    app = require('../src/server');
+    await new Promise((resolve) => {
+      server = app.listen(PORT, resolve);
+    });
+
+    console.log('\n--- 0. Testing Backend Role Enforcement ---');
+    const unauthenticated = await request('GET', '/api/farmer/dashboard');
+    assert('Unauthenticated user is denied protected farmer API (401)', unauthenticated.status === 401);
+    authToken = tokens.consumer;
+    const consumerFarmerAccess = await request('GET', '/api/farmer/dashboard');
+    assert('Consumer is denied farmer API (403)', consumerFarmerAccess.status === 403);
+    authToken = tokens.farmer;
+    const farmerAdminAccess = await request('GET', '/api/admin/stats');
+    assert('Farmer is denied admin API (403)', farmerAdminAccess.status === 403);
+    authToken = tokens.agent;
+    const agentConsumerAccess = await request('GET', '/api/consumer/dashboard');
+    assert('Delivery agent is denied consumer private API (403)', agentConsumerAccess.status === 403);
+    authToken = tokens.admin;
+    const adminAccess = await request('GET', '/api/admin/stats');
+    assert('Admin is authorized for admin API (200)', adminAccess.status === 200);
+    authToken = tokens.farmer;
+
     // -------------------------------------------------------------------------
     // 1. REJECTION ENUM VALIDATION
     // -------------------------------------------------------------------------
@@ -74,12 +140,13 @@ async function runEdgeCases() {
 
     // Create a batch
     const pRes = await request('POST', '/api/farmer/request-pickup', {
-      farmerId: 'farmer_1',
+      farmerId,
       liters: 30
-    });
+    }, idempotencyHeaders());
     const batchId = pRes.data.batchId;
 
     // Invalid rejection reason
+    authToken = tokens.agent;
     const invalidReason = await request('POST', '/api/delivery/reject-batch', {
       batchId,
       reason: 'Invalid Made Up Reason',
@@ -98,15 +165,18 @@ async function runEdgeCases() {
       'Other'
     ];
 
+    authToken = tokens.farmer;
     for (const r of validReasons) {
-      const p = await request('POST', '/api/farmer/request-pickup', { farmerId: 'farmer_1', liters: 10 });
+      const p = await request('POST', '/api/farmer/request-pickup', { farmerId, liters: 10 }, idempotencyHeaders());
       const bId = p.data.batchId;
+      authToken = tokens.agent;
       const res = await request('POST', '/api/delivery/reject-batch', {
         batchId: bId,
         reason: r,
         agentId: 'agent_1'
       });
       assert(`Accept valid rejection reason: "${r}"`, res.status === 200 && res.data.success);
+      authToken = tokens.farmer;
     }
 
     // -------------------------------------------------------------------------
@@ -114,10 +184,11 @@ async function runEdgeCases() {
     // -------------------------------------------------------------------------
     console.log('\n--- 2. Testing Quality Parameter Boundaries & Extreme Values ---');
 
-    const p3 = await request('POST', '/api/farmer/request-pickup', { farmerId: 'farmer_1', liters: 25 });
+    const p3 = await request('POST', '/api/farmer/request-pickup', { farmerId, liters: 25 }, idempotencyHeaders());
     const bId3 = p3.data.batchId;
 
     // Negative Fat
+    authToken = tokens.agent;
     const negFat = await request('POST', '/api/delivery/test-and-collect', {
       batchId: bId3,
       testedFat: -1.5,
@@ -158,15 +229,16 @@ async function runEdgeCases() {
     console.log('\n--- 3. Testing Withdrawal & Balance Constraints ---');
 
     // Withdraw more than available balance
+    authToken = tokens.farmer;
     const excessiveWth = await request('POST', '/api/farmer/payout', {
-      farmerId: 'farmer_1',
+      farmerId,
       amount: 999999999
     });
     assert('Reject withdrawal amount greater than balance (HTTP 400)', excessiveWth.status === 400);
 
     // Negative withdrawal amount
     const negWth = await request('POST', '/api/farmer/payout', {
-      farmerId: 'farmer_1',
+      farmerId,
       amount: -100
     });
     assert('Reject negative withdrawal amount (HTTP 400)', negWth.status === 400);
@@ -176,15 +248,36 @@ async function runEdgeCases() {
     // -------------------------------------------------------------------------
     console.log('\n--- 4. Testing Batch Status Lifecycle Progression ---');
 
-    const p4 = await request('POST', '/api/farmer/request-pickup', { farmerId: 'farmer_1', liters: 50 });
+    const p4 = await request('POST', '/api/farmer/request-pickup', { farmerId, liters: 50 }, idempotencyHeaders());
     const bId4 = p4.data.batchId;
+    await MilkBatch.updateOne({ batchId: bId4 }, {
+      $set: { agentId: testAgent._id.toString(), agentName: testAgent.name }
+    });
 
+    authToken = tokens.agent;
     const invalidStatus = await request('PUT', `/api/batches/${bId4}/status`, {
       newStatus: 'InvalidStatusName'
     });
     assert('Reject invalid batch status name (HTTP 400)', invalidStatus.status === 400);
 
-    // Step 1: Collected -> In Transit
+    const bypassQuality = await request('PUT', `/api/batches/${bId4}/status`, {
+      newStatus: 'In Transit',
+      reason: 'Attempt to bypass quality inspection'
+    });
+    assert('Reject batch transit that bypasses required quality acceptance',
+      bypassQuality.status === 409 && (await MilkBatch.findOne({ batchId: bId4 })).status === 'Collected');
+
+    const qualityInspection = await request('POST', '/api/delivery/test-and-collect', {
+      batchId: bId4,
+      testedFat: 4.5,
+      testedSNF: 8.5,
+      lactometerReading: 29,
+      temperature: 4
+    });
+    assert('Require delivery-agent quality inspection before accepted-state transitions',
+      qualityInspection.status === 200 && qualityInspection.data.batch.status === 'Accepted');
+
+    // Step 1: Accepted -> In Transit
     const toTransit = await request('PUT', `/api/batches/${bId4}/status`, {
       newStatus: 'In Transit',
       changedBy: 'Logistics Manager',
@@ -217,13 +310,15 @@ async function runEdgeCases() {
       console.error('\n⚠️ Some edge case tests failed!');
       process.exit(1);
     } else {
-      console.log('\n🎉 ALL 18/18 RBAC & EDGE CASE TESTS PASSED CLEANLY!');
+      console.log(`\n🎉 ALL ${passedCount}/${results.length} RBAC & EDGE CASE TESTS PASSED CLEANLY!`);
     }
 
   } catch (err) {
     console.error('Fatal Error:', err);
+    process.exitCode = 1;
   } finally {
     if (server) server.close();
+    await mongoose.disconnect();
   }
 }
 

@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { 
   Milk, Wallet, Clock, Settings, Calendar, Truck, 
-  ShieldCheck, Sparkles, X 
+  ShieldCheck, Sparkles, X, ShoppingCart
 } from 'lucide-react';
 
 export default function Sidebar() {
@@ -35,6 +35,7 @@ export default function Sidebar() {
   const consumerItems = [
     { id: 'status', label: 'Current Milk Status', icon: Milk, badge: 'ETA 7:15 AM' },
     { id: 'subscription', label: 'Subscription & Days', icon: Calendar, badge: `${user.subscription?.daysRemaining || 22} Days Left` },
+    { id: 'orders', label: 'Shop & Orders', icon: ShoppingCart },
     { id: 'history', label: 'Delivery History', icon: Clock },
     { id: 'settings', label: 'Settings & Address', icon: Settings }
   ];

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
@@ -20,6 +20,7 @@ export default function FarmerDashboard() {
   const [batchesList, setBatchesList] = useState([]);
   const [historyLogs, setHistoryLogs] = useState([]);
   const [transactions, setTransactions] = useState([]);
+  const [recordTotals, setRecordTotals] = useState({ batches: 0, history: 0, transactions: 0 });
   const [loading, setLoading] = useState(true);
 
   // Pagination States
@@ -39,6 +40,7 @@ export default function FarmerDashboard() {
   const [showPayoutModal, setShowPayoutModal] = useState(false);
   const [payoutAmount, setPayoutAmount] = useState('');
   const [submittingPayout, setSubmittingPayout] = useState(false);
+  const idempotencyKeys = useRef({});
   const [payoutMsg, setPayoutMsg] = useState('');
 
   // QR Modal State
@@ -63,13 +65,14 @@ export default function FarmerDashboard() {
     if (!user?.id) return;
     try {
       const [dashRes, histRes] = await Promise.all([
-        apiFetch(`/api/farmer/dashboard?farmerId=${user.id}`),
-        apiFetch(`/api/farmer/history?farmerId=${user.id}`)
+        apiFetch(`/api/farmer/dashboard?page=${batchPage}&limit=${PAGE_SIZE}&search=${encodeURIComponent(searchTerm)}`, { noCache: true }),
+        apiFetch(`/api/farmer/history?batchPage=${historyPage}&transactionPage=${txPage}&limit=${PAGE_SIZE}&search=${encodeURIComponent(searchTerm)}`, { noCache: true })
       ]);
 
       if (dashRes && dashRes.success) {
         setDashboardData(dashRes);
         setBatchesList(dashRes.batches || []);
+        setRecordTotals(prev => ({ ...prev, batches: dashRes.pagination?.totalItems || 0 }));
         if (dashRes.farmer) {
           setFarmName(dashRes.farmer.farmName || '');
           setLocation(dashRes.farmer.location || '');
@@ -86,6 +89,11 @@ export default function FarmerDashboard() {
       if (histRes && histRes.success) {
         setHistoryLogs(Array.isArray(histRes.logs) ? histRes.logs : []);
         setTransactions(Array.isArray(histRes.transactions) ? histRes.transactions : []);
+        setRecordTotals({
+          batches: dashRes?.pagination?.totalItems || 0,
+          history: histRes.pagination?.batches?.totalItems || 0,
+          transactions: histRes.pagination?.transactions?.totalItems || 0
+        });
         if (histRes.batches && histRes.batches.length > 0) {
           setBatchesList(histRes.batches);
         }
@@ -99,7 +107,7 @@ export default function FarmerDashboard() {
 
   useEffect(() => {
     fetchFarmerData();
-  }, [user?.id]);
+  }, [user?.id, batchPage, historyPage, txPage, searchTerm]);
 
   // Submit Milk Collection Request
   const handleRequestPickup = async (e) => {
@@ -110,15 +118,18 @@ export default function FarmerDashboard() {
     setLogSuccessMsg('');
     setGeneratedBatchId('');
     try {
+      const payload = { farmerId: user?.id, liters, notes };
+      const serializedPayload = JSON.stringify(payload);
+      if (idempotencyKeys.current.pickup?.payload !== serializedPayload) {
+        idempotencyKeys.current.pickup = { payload: serializedPayload, key: crypto.randomUUID() };
+      }
       const data = await apiFetch('/api/farmer/request-pickup', {
         method: 'POST',
-        body: JSON.stringify({
-          farmerId: user?.id,
-          liters,
-          notes
-        })
+        headers: { 'Idempotency-Key': idempotencyKeys.current.pickup.key },
+        body: serializedPayload
       });
       if (data && data.success) {
+        idempotencyKeys.current.pickup = null;
         setLogSuccessMsg(data.message);
         setGeneratedBatchId(data.batchId || data.batch?.batchId || '');
         showToast(`Batch ${data.batchId} created successfully!`, 'success');
@@ -142,14 +153,18 @@ export default function FarmerDashboard() {
     setSubmittingPayout(true);
     setPayoutMsg('');
     try {
+      const payload = { farmerId: user?.id, amount: Number(payoutAmount) };
+      const serializedPayload = JSON.stringify(payload);
+      if (idempotencyKeys.current.payout?.payload !== serializedPayload) {
+        idempotencyKeys.current.payout = { payload: serializedPayload, key: crypto.randomUUID() };
+      }
       const data = await apiFetch('/api/farmer/payout', {
         method: 'POST',
-        body: JSON.stringify({
-          farmerId: user?.id,
-          amount: Number(payoutAmount)
-        })
+        headers: { 'Idempotency-Key': idempotencyKeys.current.payout.key },
+        body: serializedPayload
       });
       if (data && data.success) {
+        idempotencyKeys.current.payout = null;
         setPayoutMsg(data.message);
         showToast('Payout withdrawal request submitted successfully.', 'success');
         if (data.remainingBalance !== undefined) {
@@ -252,18 +267,11 @@ export default function FarmerDashboard() {
   const rejectedBatches = (batchesList || []).filter(b => b.status === 'Rejected');
   const txList = Array.isArray(transactions) ? transactions : [];
 
-  const filteredBatches = (batchesList.length > 0 ? batchesList : historyLogs).filter(batch => {
-    const q = searchTerm.toLowerCase();
-    const batchIdStr = String(batch.batchId || batch.id || '').toLowerCase();
-    const statusStr = String(batch.status || '').toLowerCase();
-    const notesStr = String(batch.notes || '').toLowerCase();
-    return batchIdStr.includes(q) || statusStr.includes(q) || notesStr.includes(q);
-  });
+  const filteredBatches = batchesList.length > 0 ? batchesList : historyLogs;
 
-  // Paginated Slices
-  const paginatedBatches = filteredBatches.slice((batchPage - 1) * PAGE_SIZE, batchPage * PAGE_SIZE);
-  const paginatedHistory = historyLogs.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
-  const paginatedTx = txList.slice((txPage - 1) * PAGE_SIZE, txPage * PAGE_SIZE);
+  const paginatedBatches = filteredBatches;
+  const paginatedHistory = historyLogs;
+  const paginatedTx = txList;
 
   if (loading && !dashboardData) {
     return (
@@ -642,7 +650,7 @@ export default function FarmerDashboard() {
 
               <Pagination
                 currentPage={batchPage}
-                totalItems={filteredBatches.length}
+                totalItems={recordTotals.batches}
                 pageSize={PAGE_SIZE}
                 onPageChange={setBatchPage}
               />
@@ -705,7 +713,7 @@ export default function FarmerDashboard() {
 
               <Pagination
                 currentPage={historyPage}
-                totalItems={historyLogs.length}
+                totalItems={recordTotals.history}
                 pageSize={PAGE_SIZE}
                 onPageChange={setHistoryPage}
               />
@@ -787,7 +795,7 @@ export default function FarmerDashboard() {
 
                 <Pagination
                   currentPage={txPage}
-                  totalItems={txList.length}
+                  totalItems={recordTotals.transactions}
                   pageSize={PAGE_SIZE}
                   onPageChange={setTxPage}
                 />

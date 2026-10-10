@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
@@ -25,7 +25,10 @@ export default function DeliveryDashboard() {
   // Pagination States
   const [pickupPage, setPickupPage] = useState(1);
   const [batchPage, setBatchPage] = useState(1);
+  const [deliveryPage, setDeliveryPage] = useState(1);
   const [txPage, setTxPage] = useState(1);
+  const [updatingDeliveryId, setUpdatingDeliveryId] = useState('');
+  const payoutIdempotencyKey = useRef(null);
   const PAGE_SIZE = 6;
 
   // Selected Pickup for Quality Test Modal
@@ -52,9 +55,20 @@ export default function DeliveryDashboard() {
 
   const fetchAgentDashboard = async () => {
     try {
-      const data = await apiFetch(`/api/delivery/dashboard?agentId=${user?.id}`);
+      const params = new URLSearchParams({
+        pickupPage: String(pickupPage),
+        batchPage: String(batchPage),
+        deliveryPage: String(deliveryPage),
+        transactionPage: String(txPage),
+        limit: String(PAGE_SIZE)
+      });
+      const data = await apiFetch(`/api/delivery/dashboard?${params.toString()}`, { noCache: true });
       if (data && data.success) {
-        setDashboardData(data);
+        setDashboardData({
+          ...data,
+          assignedPickups: data.farmerPickups || [],
+          assignedDeliveries: data.consumerDeliveries || []
+        });
         setAgentProfile(data.agent);
         setTransactions(data.transactions || []);
         setBatches(data.batches || []);
@@ -72,7 +86,7 @@ export default function DeliveryDashboard() {
 
   useEffect(() => {
     fetchAgentDashboard();
-  }, [user?.id]);
+  }, [user?.id, pickupPage, batchPage, deliveryPage, txPage]);
 
   // Live calculation preview
   const fatVal = parseFloat(testedFat) || 0;
@@ -184,8 +198,10 @@ export default function DeliveryDashboard() {
     setPayoutMsg('');
 
     try {
+      payoutIdempotencyKey.current ||= crypto.randomUUID();
       const data = await apiFetch('/api/delivery/payout', {
         method: 'POST',
+        headers: { 'Idempotency-Key': payoutIdempotencyKey.current },
         body: JSON.stringify({
           agentId: user?.id,
           amount: Number(payoutAmount)
@@ -193,6 +209,7 @@ export default function DeliveryDashboard() {
       });
 
       if (data && data.success) {
+        payoutIdempotencyKey.current = null;
         setPayoutMsg(data.message);
         showToast('Commission withdrawal processed successfully!', 'success');
         if (data.remainingBalance !== undefined) {
@@ -233,10 +250,35 @@ export default function DeliveryDashboard() {
   const assignedDeliveries = dashboardData?.assignedDeliveries || [];
   const agentBal = agentProfile?.balance !== undefined ? agentProfile.balance : (user?.balance || 0);
 
-  // Paginated Slices
-  const paginatedPickups = assignedPickups.slice((pickupPage - 1) * PAGE_SIZE, pickupPage * PAGE_SIZE);
-  const paginatedBatches = batches.slice((batchPage - 1) * PAGE_SIZE, batchPage * PAGE_SIZE);
-  const paginatedTx = transactions.slice((txPage - 1) * PAGE_SIZE, txPage * PAGE_SIZE);
+  const paginatedPickups = assignedPickups;
+  const paginatedBatches = batches;
+  const paginatedTx = transactions;
+
+  const updateDeliveryStatus = async (delivery) => {
+    if (updatingDeliveryId) return;
+    const status = delivery.status === 'Assigned' ? 'Out for Delivery' : 'Delivered';
+    setUpdatingDeliveryId(delivery.deliveryId);
+    try {
+      const result = await apiFetch('/api/delivery/update-status', {
+        method: 'POST',
+        body: JSON.stringify({
+          taskId: delivery.deliveryId,
+          type: 'consumer_delivery',
+          status
+        })
+      });
+      if (!result?.success) {
+        showToast(result?.message || 'Unable to update delivery status.', 'error');
+        return;
+      }
+      showToast(`Delivery ${status.toLowerCase()}.`, 'success');
+      await fetchAgentDashboard();
+    } catch (error) {
+      showToast(error.message || 'Unable to update delivery status. Please try again.', 'error');
+    } finally {
+      setUpdatingDeliveryId('');
+    }
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
@@ -379,9 +421,57 @@ export default function DeliveryDashboard() {
 
                 <Pagination
                   currentPage={pickupPage}
-                  totalItems={assignedPickups.length}
+                  totalItems={dashboardData?.pagination?.pickups?.totalItems || 0}
                   pageSize={PAGE_SIZE}
                   onPageChange={setPickupPage}
+                />
+              </>
+            )}
+          </div>
+
+          <div className="card">
+            <div style={{ marginBottom: '1rem' }}>
+              <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Assigned Consumer Deliveries</h3>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Update tracking as orders leave for delivery and arrive.</p>
+            </div>
+            {assignedDeliveries.length === 0 ? (
+              <EmptyState title="No assigned deliveries" description="New order assignments will appear here." />
+            ) : (
+              <>
+                <div className="table-responsive">
+                  <table className="data-table">
+                    <thead>
+                      <tr><th>Delivery</th><th>Order</th><th>Address</th><th>Quantity</th><th>Status</th><th>Action</th></tr>
+                    </thead>
+                    <tbody>
+                      {assignedDeliveries.map(delivery => (
+                        <tr key={delivery.deliveryId}>
+                          <td><strong>{delivery.deliveryId}</strong></td>
+                          <td>{delivery.orderId || 'Subscription'}</td>
+                          <td>{delivery.deliveryAddress}</td>
+                          <td>{delivery.quantity} L</td>
+                          <td><span className="badge badge-info">{delivery.status}</span></td>
+                          <td>
+                            <button
+                              className="btn-primary"
+                              disabled={Boolean(updatingDeliveryId)}
+                              onClick={() => updateDeliveryStatus(delivery)}
+                              style={{ padding: '6px 10px', fontSize: '0.8rem' }}
+                            >
+                              {updatingDeliveryId === delivery.deliveryId ? <Loader2 size={14} /> : null}
+                              {delivery.status === 'Assigned' ? 'Start delivery' : 'Mark delivered'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <Pagination
+                  currentPage={deliveryPage}
+                  totalItems={dashboardData?.pagination?.deliveries?.totalItems || 0}
+                  pageSize={PAGE_SIZE}
+                  onPageChange={setDeliveryPage}
                 />
               </>
             )}
@@ -439,7 +529,7 @@ export default function DeliveryDashboard() {
 
               <Pagination
                 currentPage={batchPage}
-                totalItems={batches.length}
+                totalItems={dashboardData?.pagination?.batches?.totalItems || 0}
                 pageSize={PAGE_SIZE}
                 onPageChange={setBatchPage}
               />
@@ -511,7 +601,7 @@ export default function DeliveryDashboard() {
 
                 <Pagination
                   currentPage={txPage}
-                  totalItems={transactions.length}
+                  totalItems={dashboardData?.pagination?.transactions?.totalItems || 0}
                   pageSize={PAGE_SIZE}
                   onPageChange={setTxPage}
                 />

@@ -1,267 +1,264 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
 import { 
-  Milk, ArrowRight, ShieldCheck, CheckCircle2, Phone, 
-  AlertCircle, ArrowLeft, RotateCcw, Loader2
+  Milk, ArrowRight, ShieldCheck, CheckCircle2, 
+  AlertCircle, ArrowLeft, Lock, Mail, User, 
+  Eye, EyeOff, KeyRound, Loader2, Sparkles, Check, X
 } from 'lucide-react';
 
 export default function AuthPage() {
   const { loginUser } = useAuth();
   const { showToast } = useToast();
   
-  // Auth Steps: 1 = Phone Input, 2 = OTP Verification, 3 = Account Type Selection (New Users)
-  const [step, setStep] = useState(1);
-  const [mobileNumber, setMobileNumber] = useState('');
-  const [maskedPhone, setMaskedPhone] = useState('');
-  const [isExistingUser, setIsExistingUser] = useState(false);
+  // Auth Modes: 'signin' | 'register' | 'forgot' | 'reset'
+  const [mode, setMode] = useState('signin');
 
-  // Step 2: OTP State (Array of 6 digits)
-  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
-  const [resendTimer, setResendTimer] = useState(0);
-  const otpInputRefs = [useRef(null), useRef(null), useRef(null), useRef(null), useRef(null), useRef(null)];
-
-  // Step 3: Account Type Selection State
+  // Form Fields
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [fullName, setFullName] = useState('');
   const [selectedRole, setSelectedRole] = useState('consumer');
-  const [verificationToken, setVerificationToken] = useState('');
+  const [resetToken, setResetToken] = useState('');
 
+  // UI States
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  // Countdown timer effect for Resend OTP
-  useEffect(() => {
-    let interval = null;
-    if (resendTimer > 0) {
-      interval = setInterval(() => {
-        setResendTimer(prev => prev - 1);
-      }, 1000);
-    } else {
-      clearInterval(interval);
+  // Password Strength Calculation
+  const passwordStrength = useMemo(() => {
+    if (!password) return { score: 0, label: 'None', color: 'var(--text-muted)' };
+    let score = 0;
+    const hasLength = password.length >= 8;
+    const hasUpper = /[A-Z]/.test(password);
+    const hasLower = /[a-z]/.test(password);
+    const hasNumber = /[0-9]/.test(password);
+    const hasSpecial = /[^A-Za-z0-9]/.test(password);
+
+    if (hasLength) score += 1;
+    if (hasUpper && hasLower) score += 1;
+    if (hasNumber) score += 1;
+    if (hasSpecial || password.length >= 12) score += 1;
+
+    switch (score) {
+      case 1:
+        return { score: 1, label: 'Weak', color: '#EF4444', percent: 25, hasLength, hasUpper, hasLower, hasNumber };
+      case 2:
+        return { score: 2, label: 'Fair', color: '#F59E0B', percent: 50, hasLength, hasUpper, hasLower, hasNumber };
+      case 3:
+        return { score: 3, label: 'Good', color: '#3B82F6', percent: 75, hasLength, hasUpper, hasLower, hasNumber };
+      case 4:
+        return { score: 4, label: 'Strong', color: '#10B981', percent: 100, hasLength, hasUpper, hasLower, hasNumber };
+      default:
+        return { score: 0, label: 'Weak', color: '#EF4444', percent: 10, hasLength, hasUpper, hasLower, hasNumber };
     }
-    return () => clearInterval(interval);
-  }, [resendTimer]);
+  }, [password]);
 
-  // Handle Phone Input (Only 10 Digits Allowed)
-  const handlePhoneChange = (e) => {
-    const cleanDigits = e.target.value.replace(/[^\d]/g, '').slice(0, 10);
-    setMobileNumber(cleanDigits);
-    if (errorMsg) setErrorMsg('');
-  };
-
-  // Step 1: Send OTP Submit
-  const handleSendOTP = async (e) => {
-    if (e) e.preventDefault();
-    if (loading) return; // Prevent double-clicks
-
+  // Mode Switch Helper
+  const switchMode = (newMode) => {
+    setMode(newMode);
     setErrorMsg('');
     setSuccessMsg('');
-
-    const clean = mobileNumber.replace(/[^\d]/g, '');
-    if (!clean || clean.length !== 10) {
-      setErrorMsg('Please enter a valid 10-digit Indian mobile number.');
-      showToast('Please enter a valid 10-digit mobile number.', 'warning');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const data = await apiFetch('/api/auth/send-otp', {
-        method: 'POST',
-        body: JSON.stringify({
-          phone: clean,
-          mobile: clean,
-          phoneNumber: clean
-        })
-      });
-
-      if (data && data.success) {
-        setMaskedPhone(data.maskedPhone || `+91 XXXXXXX${clean.slice(7)}`);
-        setIsExistingUser(Boolean(data.isExistingUser));
-        setSuccessMsg(data.message || `Verification code sent to +91 XXXXXXX${clean.slice(7)}`);
-        showToast(`Verification code sent to ${data.maskedPhone || clean}`, 'success');
-        setStep(2);
-        setResendTimer(30);
-
-        // Auto-focus first OTP box
-        setTimeout(() => {
-          if (otpInputRefs[0]?.current) {
-            otpInputRefs[0].current.focus();
-          }
-        }, 80);
-      } else {
-        const msg = data?.message || 'Failed to send OTP. Please check your phone number.';
-        setErrorMsg(msg);
-        showToast(msg, 'error');
-      }
-    } catch (err) {
-      setErrorMsg('Unable to connect to server. Please try again.');
-      showToast('Unable to connect to server.', 'error');
-    } finally {
-      setLoading(false);
-    }
+    setShowPassword(false);
+    setShowConfirmPassword(false);
   };
 
-  // OTP Box Inputs & Auto-Focusing
-  const handleOtpBoxChange = (index, value) => {
-    const cleanDigit = value.replace(/[^\d]/g, '').slice(-1);
-    const newDigits = [...otpDigits];
-    newDigits[index] = cleanDigit;
-    setOtpDigits(newDigits);
-    if (errorMsg) setErrorMsg('');
-
-    // Auto-focus next input box
-    if (cleanDigit && index < 5 && otpInputRefs[index + 1]?.current) {
-      otpInputRefs[index + 1].current.focus();
-    }
-  };
-
-  // Support OTP Paste into boxes
-  const handleOtpPaste = (e) => {
-    e.preventDefault();
-    const pastedData = e.clipboardData.getData('text').replace(/[^\d]/g, '').slice(0, 6);
-    if (pastedData.length > 0) {
-      const digits = pastedData.split('');
-      const newDigits = ['', '', '', '', '', ''];
-      digits.forEach((d, idx) => { if (idx < 6) newDigits[idx] = d; });
-      setOtpDigits(newDigits);
-      
-      const nextFocusIdx = Math.min(pastedData.length, 5);
-      if (otpInputRefs[nextFocusIdx]?.current) {
-        otpInputRefs[nextFocusIdx].current.focus();
-      }
-    }
-  };
-
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === 'Backspace' && !otpDigits[index] && index > 0 && otpInputRefs[index - 1]?.current) {
-      otpInputRefs[index - 1].current.focus();
-    }
-  };
-
-  // Resend OTP Handler
-  const handleResendOTP = async () => {
-    if (resendTimer > 0 || loading) return;
-    setErrorMsg('');
-    setSuccessMsg('');
-    setLoading(true);
-
-    try {
-      const data = await apiFetch('/api/auth/send-otp', {
-        method: 'POST',
-        body: JSON.stringify({
-          phone: mobileNumber,
-          mobile: mobileNumber,
-          phoneNumber: mobileNumber
-        })
-      });
-
-      if (data && data.success) {
-        setSuccessMsg(`New OTP sent to ${maskedPhone}`);
-        showToast('New verification code sent successfully.', 'success');
-        setResendTimer(30);
-      } else {
-        const msg = data?.message || 'Failed to resend OTP.';
-        setErrorMsg(msg);
-        showToast(msg, 'error');
-      }
-    } catch (err) {
-      setErrorMsg('Server connection error.');
-      showToast('Server connection error.', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Step 2: Verify OTP Submit
-  const handleVerifyOTP = async (e) => {
-    if (e) e.preventDefault();
-    if (loading) return; // Prevent double-clicks
-
-    setErrorMsg('');
-    setSuccessMsg('');
-
-    const enteredOtp = otpDigits.join('');
-    if (enteredOtp.length !== 6) {
-      setErrorMsg('Please enter the full 6-digit OTP verification code.');
-      showToast('Please enter the full 6-digit verification code.', 'warning');
-      return;
-    }
-
-    setLoading(true);
-
-    try {
-      const data = await apiFetch('/api/auth/verify-otp', {
-        method: 'POST',
-        body: JSON.stringify({
-          phoneNumber: mobileNumber,
-          mobile: mobileNumber,
-          otp: enteredOtp
-        })
-      });
-
-      if (data && data.success) {
-        if (data.isExistingUser && data.user && data.token) {
-          setSuccessMsg(`Welcome back, ${data.user.name}!`);
-          showToast(`Welcome back, ${data.user.name}!`, 'success');
-          setTimeout(() => {
-            loginUser(data.user, data.token);
-          }, 150);
-        } else {
-          setVerificationToken(data.verificationToken || '');
-          setSuccessMsg('Phone verified! Please choose your account type.');
-          showToast('Phone verified successfully!', 'success');
-          setStep(3);
-        }
-      } else {
-        const msg = data?.message || 'Invalid OTP. Please check the code and try again.';
-        setErrorMsg(msg);
-        showToast(msg, 'error');
-      }
-    } catch (err) {
-      setErrorMsg('Server connection error verifying OTP.');
-      showToast('Error verifying OTP.', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Step 3: Account Creation Submit (New Users)
-  const handleCreateAccount = async (e) => {
+  // 1. Sign In Handler
+  const handleSignIn = async (e) => {
     if (e) e.preventDefault();
     if (loading) return;
 
     setErrorMsg('');
     setSuccessMsg('');
+
+    if (!email.trim() || !password) {
+      setErrorMsg('Please enter both your email and password.');
+      return;
+    }
+
     setLoading(true);
 
     try {
-      const data = await apiFetch('/api/auth/create-account', {
+      const data = await apiFetch('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({
-          phoneNumber: mobileNumber,
-          countryCode: '+91',
-          role: selectedRole,
-          verificationToken
+          email: email.trim().toLowerCase(),
+          password
         })
       });
 
       if (data && data.success && data.user && data.token) {
-        setSuccessMsg(`Account created successfully! Welcome to HealthyMilk.`);
-        showToast('Account created successfully!', 'success');
-        setTimeout(() => {
-          loginUser(data.user, data.token);
-        }, 150);
+        showToast(data.message || `Welcome back, ${data.user.name}!`, 'success');
+        loginUser(data.user, data.token);
       } else {
-        const msg = data?.message || 'Failed to create account. Please try again.';
+        const msg = data?.message || 'Invalid email or password. Please try again.';
         setErrorMsg(msg);
         showToast(msg, 'error');
       }
     } catch (err) {
-      setErrorMsg('Server error creating account.');
-      showToast('Server error creating account.', 'error');
+      setErrorMsg('Unable to connect to authentication server. Please check your network.');
+      showToast('Connection error.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 2. Register Handler
+  const handleRegister = async (e) => {
+    if (e) e.preventDefault();
+    if (loading) return;
+
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!fullName.trim() || fullName.trim().length < 2) {
+      setErrorMsg('Please enter your full name (at least 2 characters).');
+      return;
+    }
+
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setErrorMsg('Please enter a valid email address.');
+      return;
+    }
+
+    if (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+      setErrorMsg('Password must be at least 8 characters and include uppercase, lowercase, and numbers.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMsg('Passwords do not match. Please re-enter your password.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: fullName.trim(),
+          email: email.trim().toLowerCase(),
+          password,
+          role: selectedRole
+        })
+      });
+
+      if (data && data.success && data.user && data.token) {
+        showToast(`Account created successfully! Welcome to HealthyMilk.`, 'success');
+        loginUser(data.user, data.token);
+      } else {
+        const msg = data?.message || 'Registration failed. Please check your details.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error during registration.');
+      showToast('Registration connection error.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 3. Forgot Password Handler
+  const handleForgotPassword = async (e) => {
+    if (e) e.preventDefault();
+    if (loading) return;
+
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setErrorMsg('Please enter a valid email address.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: email.trim().toLowerCase()
+        })
+      });
+
+      if (data && data.success) {
+        setSuccessMsg(data.message || 'Password reset instructions have been generated.');
+        showToast('Password reset link generated.', 'success');
+        if (data.resetToken) {
+          setResetToken(data.resetToken);
+          // Transition directly to reset password entry for smooth experience
+          setTimeout(() => {
+            setMode('reset');
+          }, 1200);
+        }
+      } else {
+        const msg = data?.message || 'Error processing request.';
+        setErrorMsg(msg);
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 4. Reset Password Handler
+  const handleResetPassword = async (e) => {
+    if (e) e.preventDefault();
+    if (loading) return;
+
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    if (!resetToken.trim()) {
+      setErrorMsg('Please enter the password reset token.');
+      return;
+    }
+
+    if (password.length < 8 || !/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+      setErrorMsg('Password must be at least 8 characters and include uppercase, lowercase, and numbers.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMsg('Passwords do not match.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/api/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({
+          resetToken: resetToken.trim(),
+          newPassword: password
+        })
+      });
+
+      if (data && data.success) {
+        showToast('Password updated successfully! Please sign in.', 'success');
+        setSuccessMsg('Password updated successfully! Please sign in with your new password.');
+        setPassword('');
+        setConfirmPassword('');
+        setResetToken('');
+        setTimeout(() => {
+          switchMode('signin');
+        }, 1500);
+      } else {
+        const msg = data?.message || 'Invalid or expired reset token.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error resetting password.');
     } finally {
       setLoading(false);
     }
@@ -282,14 +279,15 @@ export default function AuthPage() {
     }}>
       <div style={{
         width: '100%',
-        maxWidth: '480px',
+        maxWidth: mode === 'register' ? '540px' : '460px',
         background: 'var(--bg-card)',
         border: '1px solid var(--border-color)',
         borderRadius: 'clamp(16px, 4vw, 24px)',
         boxShadow: 'var(--shadow-lg)',
-        padding: 'clamp(1.25rem, 4vw, 2.5rem)',
+        padding: 'clamp(1.25rem, 4vw, 2.25rem)',
         backdropFilter: 'blur(20px)',
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        transition: 'max-width 0.25s ease'
       }}>
         
         {/* Brand Header */}
@@ -308,19 +306,71 @@ export default function AuthPage() {
           }}>
             <Milk size={30} />
           </div>
-          <h2 style={{ fontSize: 'clamp(1.4rem, 4vw, 1.75rem)', fontWeight: 800, color: 'var(--text-main)' }}>
+          <h2 style={{ fontSize: 'clamp(1.4rem, 4vw, 1.75rem)', fontWeight: 800, color: 'var(--text-main)', letterSpacing: '-0.5px' }}>
             Healthy<span style={{ color: 'var(--accent-emerald)' }}>Milk</span>
           </h2>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '4px' }}>
-            {step === 1 && 'Pure Dairy Ecosystem – Enter phone number to continue'}
-            {step === 2 && 'Verify Mobile Number'}
-            {step === 3 && 'Choose Your Account Type'}
+            {mode === 'signin' && 'Sign in to access your pure dairy dashboard'}
+            {mode === 'register' && 'Create your account in the HealthyMilk network'}
+            {mode === 'forgot' && 'Reset your account password securely'}
+            {mode === 'reset' && 'Set a new secure password'}
           </p>
         </div>
 
-        {/* Inline Alerts */}
-        {errorMsg && (
+        {/* Tab Switcher for Sign In / Register */}
+        {(mode === 'signin' || mode === 'register') && (
           <div style={{
+            display: 'flex',
+            background: 'var(--bg-primary)',
+            padding: '4px',
+            borderRadius: '14px',
+            border: '1px solid var(--border-color)',
+            marginBottom: '1.25rem'
+          }}>
+            <button
+              type="button"
+              onClick={() => switchMode('signin')}
+              style={{
+                flex: 1,
+                padding: '0.65rem',
+                borderRadius: '10px',
+                border: 'none',
+                background: mode === 'signin' ? 'var(--bg-card)' : 'transparent',
+                color: mode === 'signin' ? 'var(--text-main)' : 'var(--text-muted)',
+                fontWeight: mode === 'signin' ? 700 : 500,
+                fontSize: '0.88rem',
+                cursor: 'pointer',
+                boxShadow: mode === 'signin' ? 'var(--shadow-sm)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              Sign In
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('register')}
+              style={{
+                flex: 1,
+                padding: '0.65rem',
+                borderRadius: '10px',
+                border: 'none',
+                background: mode === 'register' ? 'var(--bg-card)' : 'transparent',
+                color: mode === 'register' ? 'var(--text-main)' : 'var(--text-muted)',
+                fontWeight: mode === 'register' ? 700 : 500,
+                fontSize: '0.88rem',
+                cursor: 'pointer',
+                boxShadow: mode === 'register' ? 'var(--shadow-sm)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              Register
+            </button>
+          </div>
+        )}
+
+        {/* Inline Feedback Alerts */}
+        {errorMsg && (
+          <div role="alert" style={{
             background: 'var(--accent-rose-light)',
             color: 'var(--accent-rose)',
             padding: '0.75rem 0.9rem',
@@ -338,7 +388,7 @@ export default function AuthPage() {
         )}
 
         {successMsg && (
-          <div style={{
+          <div role="status" aria-live="polite" style={{
             background: 'var(--accent-emerald-light)',
             color: 'var(--accent-emerald)',
             padding: '0.75rem 0.9rem',
@@ -355,346 +405,407 @@ export default function AuthPage() {
         )}
 
         {/* ==================================================== */}
-        {/* STEP 1: Enter Phone Number Screen */}
+        {/* VIEW 1: SIGN IN FORM */}
         {/* ==================================================== */}
-        {step === 1 && (
-          <form onSubmit={handleSendOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
+        {mode === 'signin' && (
+          <form onSubmit={handleSignIn} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+            {/* Email Field */}
             <div>
-              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                Mobile Phone Number
+              <label htmlFor="signin-email" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Email Address
               </label>
-              <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.4rem' }}>
-                <div style={{
-                  padding: '0.75rem clamp(0.5rem, 2vw, 0.85rem)',
-                  borderRadius: '12px',
-                  border: '1px solid var(--border-color)',
-                  background: 'var(--bg-primary)',
-                  color: 'var(--text-main)',
-                  fontWeight: 800,
-                  fontSize: '0.92rem',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.25rem',
-                  flexShrink: 0
-                }}>
-                  <span>🇮🇳</span> +91
-                </div>
-
-                <div style={{ position: 'relative', flex: 1 }}>
-                  <Phone size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }} />
-                  <input
-                    type="tel"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    autoComplete="tel-national"
-                    required
-                    maxLength={10}
-                    placeholder="9876543210"
-                    value={mobileNumber}
-                    onChange={handlePhoneChange}
-                    style={{
-                      width: '100%',
-                      padding: '0.75rem 0.5rem 0.75rem 2.2rem',
-                      borderRadius: '12px',
-                      border: mobileNumber.length === 10 ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
-                      background: 'var(--bg-primary)',
-                      color: 'var(--text-main)',
-                      fontSize: 'clamp(0.95rem, 3vw, 1.05rem)',
-                      fontWeight: 800,
-                      letterSpacing: '1px',
-                      boxSizing: 'border-box'
-                    }}
-                  />
-                </div>
+              <div style={{ position: 'relative' }}>
+                <Mail size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="signin-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 1rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
               </div>
-              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.4rem' }}>
-                Enter your 10-digit mobile number to receive instant SMS verification.
-              </span>
             </div>
 
+            {/* Password Field */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                <label htmlFor="signin-password" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  Password
+                </label>
+                <button
+                  type="button"
+                  onClick={() => switchMode('forgot')}
+                  style={{ background: 'none', border: 'none', color: 'var(--accent-emerald)', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+                >
+                  Forgot password?
+                </button>
+              </div>
+              <div style={{ position: 'relative' }}>
+                <Lock size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="signin-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  required
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 2.5rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: 0
+                  }}
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit Button */}
             <button
               type="submit"
-              disabled={loading || mobileNumber.length !== 10}
+              disabled={loading || !email || !password}
               className="btn-primary"
               style={{
                 width: '100%',
                 justifyContent: 'center',
                 padding: '0.85rem',
-                fontSize: '0.92rem',
-                fontWeight: 700,
-                borderRadius: '12px'
-              }}
-            >
-              {loading ? (
-                <>
-                  <Loader2 size={18} className="pulse-anim" /> Sending OTP...
-                </>
-              ) : (
-                <>
-                  Continue <ArrowRight size={18} />
-                </>
-              )}
-            </button>
-          </form>
-        )}
-
-        {/* ==================================================== */}
-        {/* STEP 2: Verify Phone Number (6-Digit Segmented OTP) */}
-        {/* ==================================================== */}
-        {step === 2 && (
-          <form onSubmit={handleVerifyOTP} style={{ display: 'flex', flexDirection: 'column', gap: '1.15rem' }}>
-            <div style={{
-              background: 'var(--accent-emerald-light)',
-              border: '1px solid var(--accent-emerald)',
-              borderRadius: '16px',
-              padding: '1rem',
-              textAlign: 'center'
-            }}>
-              <div style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase' }}>
-                📱 Mobile OTP Verification
-              </div>
-              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
-                {maskedPhone}
-              </div>
-              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Enter the 6-digit verification code sent to your mobile phone.
-              </p>
-            </div>
-
-            {/* 6 Auto-Advancing Segmented Inputs */}
-            <div>
-              <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', textAlign: 'center' }}>
-                Enter 6-Digit Code
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 'clamp(3px, 1.5vw, 8px)' }}>
-                {otpDigits.map((digit, idx) => (
-                  <input
-                    key={idx}
-                    ref={otpInputRefs[idx]}
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    autoComplete="one-time-code"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpBoxChange(idx, e.target.value)}
-                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                    onPaste={handleOtpPaste}
-                    style={{
-                      width: '100%',
-                      height: 'clamp(44px, 11vw, 54px)',
-                      borderRadius: 'clamp(8px, 2vw, 12px)',
-                      border: digit ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
-                      background: 'var(--bg-primary)',
-                      color: 'var(--text-main)',
-                      fontSize: 'clamp(1.1rem, 4.5vw, 1.35rem)',
-                      fontWeight: 800,
-                      textAlign: 'center',
-                      padding: 0,
-                      boxShadow: digit ? '0 0 0 3px rgba(16, 185, 129, 0.15)' : 'none',
-                      boxSizing: 'border-box'
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Back & Resend Actions */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-              <button
-                type="button"
-                onClick={() => { setStep(1); setErrorMsg(''); setSuccessMsg(''); }}
-                style={{ background: 'none', border: 'none', color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}
-              >
-                <ArrowLeft size={15} /> Change Number
-              </button>
-
-              <button
-                type="button"
-                onClick={handleResendOTP}
-                disabled={resendTimer > 0 || loading}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: resendTimer > 0 ? 'var(--text-muted)' : 'var(--accent-emerald)',
-                  fontWeight: 700,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  cursor: resendTimer > 0 ? 'not-allowed' : 'pointer'
-                }}
-              >
-                <RotateCcw size={14} /> {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend Code'}
-              </button>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading || otpDigits.join('').length !== 6}
-              className="btn-primary"
-              style={{
-                width: '100%',
-                justifyContent: 'center',
-                padding: '0.9rem',
                 fontSize: '0.95rem',
                 fontWeight: 700,
-                borderRadius: '12px'
+                borderRadius: '12px',
+                marginTop: '0.5rem'
               }}
             >
               {loading ? (
                 <>
-                  <Loader2 size={18} className="pulse-anim" /> Verifying...
+                  <Loader2 size={18} className="pulse-anim" /> Signing in...
                 </>
               ) : (
                 <>
-                  Verify & Continue <ShieldCheck size={18} />
+                  Sign In <ArrowRight size={18} />
                 </>
               )}
             </button>
+
+            {/* Switch to Register */}
+            <div style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+              Don't have an account?{' '}
+              <button
+                type="button"
+                onClick={() => switchMode('register')}
+                style={{ background: 'none', border: 'none', color: 'var(--accent-emerald)', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+              >
+                Create Account
+              </button>
+            </div>
           </form>
         )}
 
         {/* ==================================================== */}
-        {/* STEP 3: Account Type Selection (New Users) */}
+        {/* VIEW 2: REGISTER FORM */}
         {/* ==================================================== */}
-        {step === 3 && (
-          <form onSubmit={handleCreateAccount} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div style={{ textAlign: 'center', marginBottom: '0.5rem' }}>
-              <h3 style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                Choose Your Account Type
-              </h3>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                Select your primary role in the HealthyMilk dairy network.
-              </p>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {/* Farmer */}
-              <div
-                onClick={() => setSelectedRole('farmer')}
-                style={{
-                  padding: '1.1rem',
-                  borderRadius: '16px',
-                  border: selectedRole === 'farmer' ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
-                  background: selectedRole === 'farmer' ? 'var(--accent-emerald-light)' : 'var(--bg-primary)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.85rem',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <div style={{
-                  width: '44px',
-                  height: '44px',
-                  borderRadius: '12px',
-                  background: selectedRole === 'farmer' ? 'var(--accent-emerald)' : 'var(--bg-card)',
-                  color: selectedRole === 'farmer' ? '#FFF' : 'var(--accent-emerald)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '1.4rem'
-                }}>
-                  🧑‍🌾
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                    Dairy Farmer
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Supply raw milk, track quality checks, and receive fast payouts.
-                  </div>
-                </div>
-                {selectedRole === 'farmer' && <CheckCircle2 color="var(--accent-emerald)" size={20} />}
-              </div>
-
-              {/* Consumer */}
-              <div
-                onClick={() => setSelectedRole('consumer')}
-                style={{
-                  padding: '1.1rem',
-                  borderRadius: '16px',
-                  border: selectedRole === 'consumer' ? '2px solid var(--accent-blue)' : '1px solid var(--border-color)',
-                  background: selectedRole === 'consumer' ? 'var(--accent-blue-light)' : 'var(--bg-primary)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.85rem',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <div style={{
-                  width: '44px',
-                  height: '44px',
-                  borderRadius: '12px',
-                  background: selectedRole === 'consumer' ? 'var(--accent-blue)' : 'var(--bg-card)',
-                  color: selectedRole === 'consumer' ? '#FFF' : 'var(--accent-blue)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '1.4rem'
-                }}>
-                  🥛
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                    Milk Consumer
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Subscribe to fresh A2 milk, pause/resume anytime, verify batch traceability.
-                  </div>
-                </div>
-                {selectedRole === 'consumer' && <CheckCircle2 color="var(--accent-blue)" size={20} />}
-              </div>
-
-              {/* Delivery Agent */}
-              <div
-                onClick={() => setSelectedRole('delivery_agent')}
-                style={{
-                  padding: '1.1rem',
-                  borderRadius: '16px',
-                  border: selectedRole === 'delivery_agent' ? '2px solid var(--accent-amber)' : '1px solid var(--border-color)',
-                  background: selectedRole === 'delivery_agent' ? 'var(--accent-amber-light)' : 'var(--bg-primary)',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.85rem',
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <div style={{
-                  width: '44px',
-                  height: '44px',
-                  borderRadius: '12px',
-                  background: selectedRole === 'delivery_agent' ? 'var(--accent-amber)' : 'var(--bg-card)',
-                  color: selectedRole === 'delivery_agent' ? '#FFF' : 'var(--accent-amber)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '1.4rem'
-                }}>
-                  🚚
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-main)' }}>
-                    Delivery Agent
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    Perform lab-grade field tests, collect batches, and deliver fresh milk.
-                  </div>
-                </div>
-                {selectedRole === 'delivery_agent' && <CheckCircle2 color="var(--accent-amber)" size={20} />}
+        {mode === 'register' && (
+          <form onSubmit={handleRegister} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {/* Full Name */}
+            <div>
+              <label htmlFor="reg-name" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Full Name
+              </label>
+              <div style={{ position: 'relative' }}>
+                <User size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="reg-name"
+                  type="text"
+                  autoComplete="name"
+                  required
+                  placeholder="e.g. Ramesh Patel"
+                  value={fullName}
+                  onChange={(e) => { setFullName(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 1rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
               </div>
             </div>
 
+            {/* Email */}
+            <div>
+              <label htmlFor="reg-email" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Email Address
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Mail size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="reg-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 1rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Role Selection Cards */}
+            <div>
+              <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.4rem' }}>
+                I am registering as:
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+                {/* Farmer */}
+                <div
+                  onClick={() => setSelectedRole('farmer')}
+                  style={{
+                    padding: '0.65rem 0.5rem',
+                    borderRadius: '12px',
+                    border: selectedRole === 'farmer' ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
+                    background: selectedRole === 'farmer' ? 'var(--accent-emerald-light)' : 'var(--bg-primary)',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <div style={{ fontSize: '1.25rem', marginBottom: '2px' }}>🧑‍🌾</div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--text-main)' }}>Farmer</div>
+                </div>
+
+                {/* Consumer */}
+                <div
+                  onClick={() => setSelectedRole('consumer')}
+                  style={{
+                    padding: '0.65rem 0.5rem',
+                    borderRadius: '12px',
+                    border: selectedRole === 'consumer' ? '2px solid var(--accent-blue)' : '1px solid var(--border-color)',
+                    background: selectedRole === 'consumer' ? 'var(--accent-blue-light)' : 'var(--bg-primary)',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <div style={{ fontSize: '1.25rem', marginBottom: '2px' }}>🥛</div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--text-main)' }}>Consumer</div>
+                </div>
+
+                {/* Delivery Agent */}
+                <div
+                  onClick={() => setSelectedRole('delivery_agent')}
+                  style={{
+                    padding: '0.65rem 0.5rem',
+                    borderRadius: '12px',
+                    border: selectedRole === 'delivery_agent' ? '2px solid var(--accent-amber)' : '1px solid var(--border-color)',
+                    background: selectedRole === 'delivery_agent' ? 'var(--accent-amber-light)' : 'var(--bg-primary)',
+                    cursor: 'pointer',
+                    textAlign: 'center',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <div style={{ fontSize: '1.25rem', marginBottom: '2px' }}>🚚</div>
+                  <div style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--text-main)' }}>Agent</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Password */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                <label htmlFor="reg-password" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  Password
+                </label>
+                {password && (
+                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: passwordStrength.color }}>
+                    {passwordStrength.label}
+                  </span>
+                )}
+              </div>
+              <div style={{ position: 'relative' }}>
+                <Lock size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="reg-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  required
+                  placeholder="Min. 8 characters"
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 2.5rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: 0
+                  }}
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+
+              {/* Password Strength Meter Bar */}
+              {password && (
+                <div style={{ marginTop: '6px' }}>
+                  <div style={{ height: '4px', width: '100%', background: 'var(--border-color)', borderRadius: '2px', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${passwordStrength.percent}%`,
+                      background: passwordStrength.color,
+                      transition: 'all 0.3s ease'
+                    }} />
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem', marginTop: '6px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span style={{ color: password.length >= 8 ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                      {password.length >= 8 ? '✓' : '•'} 8+ chars
+                    </span>
+                    <span style={{ color: /[A-Z]/.test(password) ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                      {/[A-Z]/.test(password) ? '✓' : '•'} Uppercase
+                    </span>
+                    <span style={{ color: /[a-z]/.test(password) ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                      {/[a-z]/.test(password) ? '✓' : '•'} Lowercase
+                    </span>
+                    <span style={{ color: /[0-9]/.test(password) ? 'var(--accent-emerald)' : 'var(--text-muted)' }}>
+                      {/[0-9]/.test(password) ? '✓' : '•'} Number
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Confirm Password */}
+            <div>
+              <label htmlFor="reg-confirm-password" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Confirm Password
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Lock size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="reg-confirm-password"
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  required
+                  placeholder="Re-enter password"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 2.5rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: confirmPassword && confirmPassword === password ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: 0
+                  }}
+                >
+                  {showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit Button */}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || !fullName || !email || !password || password !== confirmPassword}
               className="btn-primary"
               style={{
                 width: '100%',
                 justifyContent: 'center',
-                padding: '0.9rem',
+                padding: '0.85rem',
                 fontSize: '0.95rem',
                 fontWeight: 700,
                 borderRadius: '12px',
@@ -707,9 +818,316 @@ export default function AuthPage() {
                 </>
               ) : (
                 <>
-                  Complete Setup & Open Dashboard <ArrowRight size={18} />
+                  Create Account <ArrowRight size={18} />
                 </>
               )}
+            </button>
+
+            {/* Switch to Sign In */}
+            <div style={{ textAlign: 'center', fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+              Already have an account?{' '}
+              <button
+                type="button"
+                onClick={() => switchMode('signin')}
+                style={{ background: 'none', border: 'none', color: 'var(--accent-emerald)', fontWeight: 700, cursor: 'pointer', padding: 0 }}
+              >
+                Sign In
+              </button>
+            </div>
+          </form>
+        )}
+
+        {/* ==================================================== */}
+        {/* VIEW 3: FORGOT PASSWORD */}
+        {/* ==================================================== */}
+        {mode === 'forgot' && (
+          <form onSubmit={handleForgotPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+            <div style={{
+              background: 'var(--accent-blue-light)',
+              borderRadius: '14px',
+              padding: '0.9rem',
+              fontSize: '0.82rem',
+              color: 'var(--accent-blue)',
+              fontWeight: 600,
+              lineHeight: '1.4'
+            }}>
+              Enter your registered email address and we'll send you a single-use token to securely reset your password.
+            </div>
+
+            <div>
+              <label htmlFor="forgot-email" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Registered Email Address
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Mail size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="forgot-email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="name@example.com"
+                  value={email}
+                  onChange={(e) => { setEmail(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 1rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || !email}
+              className="btn-primary"
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                padding: '0.85rem',
+                fontSize: '0.95rem',
+                fontWeight: 700,
+                borderRadius: '12px'
+              }}
+            >
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="pulse-anim" /> Generating Token...
+                </>
+              ) : (
+                <>
+                  Generate Reset Token <KeyRound size={18} />
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => switchMode('signin')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.3rem',
+                cursor: 'pointer',
+                marginTop: '0.25rem'
+              }}
+            >
+              <ArrowLeft size={16} /> Back to Sign In
+            </button>
+          </form>
+        )}
+
+        {/* ==================================================== */}
+        {/* VIEW 4: RESET PASSWORD */}
+        {/* ==================================================== */}
+        {mode === 'reset' && (
+          <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+            {/* Reset Token Field */}
+            <div>
+              <label htmlFor="reset-token" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Reset Security Token
+              </label>
+              <div style={{ position: 'relative' }}>
+                <KeyRound size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="reset-token"
+                  type="text"
+                  required
+                  placeholder="Paste your reset token here"
+                  value={resetToken}
+                  onChange={(e) => { setResetToken(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 1rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.88rem',
+                    fontFamily: 'monospace',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* New Password */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                <label htmlFor="reset-new-password" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  New Password
+                </label>
+                {password && (
+                  <span style={{ fontSize: '0.74rem', fontWeight: 700, color: passwordStrength.color }}>
+                    {passwordStrength.label}
+                  </span>
+                )}
+              </div>
+              <div style={{ position: 'relative' }}>
+                <Lock size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="reset-new-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  required
+                  placeholder="Min. 8 chars (Upper, lower, number)"
+                  value={password}
+                  onChange={(e) => { setPassword(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 2.5rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowPassword(!showPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: 0
+                  }}
+                >
+                  {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+
+              {/* Strength meter */}
+              {password && (
+                <div style={{ marginTop: '6px' }}>
+                  <div style={{ height: '4px', width: '100%', background: 'var(--border-color)', borderRadius: '2px', overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%',
+                      width: `${passwordStrength.percent}%`,
+                      background: passwordStrength.color,
+                      transition: 'all 0.3s ease'
+                    }} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Confirm New Password */}
+            <div>
+              <label htmlFor="reset-confirm-password" style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>
+                Confirm New Password
+              </label>
+              <div style={{ position: 'relative' }}>
+                <Lock size={17} color="var(--text-muted)" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }} />
+                <input
+                  id="reset-confirm-password"
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  autoComplete="new-password"
+                  required
+                  placeholder="Re-enter new password"
+                  value={confirmPassword}
+                  onChange={(e) => { setConfirmPassword(e.target.value); if (errorMsg) setErrorMsg(''); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.75rem 2.5rem 0.75rem 2.4rem',
+                    borderRadius: '12px',
+                    border: confirmPassword && confirmPassword === password ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
+                    background: 'var(--bg-primary)',
+                    color: 'var(--text-main)',
+                    fontSize: '0.92rem',
+                    fontWeight: 600,
+                    boxSizing: 'border-box'
+                  }}
+                />
+                <button
+                  type="button"
+                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  style={{
+                    position: 'absolute',
+                    right: '12px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: 0
+                  }}
+                >
+                  {showConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}
+                </button>
+              </div>
+            </div>
+
+            {/* Submit */}
+            <button
+              type="submit"
+              disabled={loading || !resetToken || !password || password !== confirmPassword}
+              className="btn-primary"
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                padding: '0.85rem',
+                fontSize: '0.95rem',
+                fontWeight: 700,
+                borderRadius: '12px'
+              }}
+            >
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="pulse-anim" /> Updating Password...
+                </>
+              ) : (
+                <>
+                  Update Password & Sign In <ShieldCheck size={18} />
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => switchMode('signin')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-muted)',
+                fontSize: '0.82rem',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.3rem',
+                cursor: 'pointer',
+                marginTop: '0.25rem'
+              }}
+            >
+              <ArrowLeft size={16} /> Back to Sign In
             </button>
           </form>
         )}

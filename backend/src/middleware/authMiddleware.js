@@ -1,15 +1,15 @@
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
-const mongoose = require('mongoose');
-const { users } = require('../store');
+const { requireDatabase } = require('../config/db');
 const User = require('../models/User');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'healthymilk_jwt_super_secret_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET;
+const jwtSecretConfigured = typeof JWT_SECRET === 'string' && Buffer.byteLength(JWT_SECRET) >= 32;
 
 // 1. Rate Limiting Middleware for Auth Endpoints
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes window
-  max: 15, // limit each IP to 15 auth requests per windowMs
+  max: process.env.AUTH_RATE_LIMIT_MAX ? Number(process.env.AUTH_RATE_LIMIT_MAX) : 100, // limit each IP per windowMs
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -18,9 +18,24 @@ const authLimiter = rateLimit({
   }
 });
 
+const otpVerificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Too many OTP verification attempts. Please try again later.'
+  }
+});
+
 // 2. JWT Verification Middleware
 const verifyToken = async (req, res, next) => {
   try {
+    if (!jwtSecretConfigured) {
+      return res.status(503).json({ success: false, message: 'Authentication requires a JWT secret of at least 32 bytes.' });
+    }
+
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({
@@ -41,16 +56,7 @@ const verifyToken = async (req, res, next) => {
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_SECRET);
-    } catch (err) {
-      // Fallback check for simulated legacy format tokens e.g. jwt_token_<id>_
-      if (token.startsWith('jwt_token_')) {
-        const idMatch = token.split('_')[2];
-        const matchedUser = users.find(u => u.id === idMatch || token.includes(u.id));
-        if (matchedUser) {
-          decoded = { id: matchedUser.id, role: matchedUser.role, email: matchedUser.email };
-        }
-      }
-    }
+    } catch (err) {}
 
     if (!decoded || !decoded.id) {
       return res.status(401).json({
@@ -59,17 +65,7 @@ const verifyToken = async (req, res, next) => {
       });
     }
 
-    // Load active user profile from DB or Memory
-    let currentUser = null;
-    if (mongoose.connection.readyState === 1) {
-      try {
-        currentUser = await User.findById(decoded.id);
-      } catch (e) {}
-    }
-
-    if (!currentUser) {
-      currentUser = users.find(u => u.id === decoded.id || u.email === decoded.email);
-    }
+    const currentUser = await User.findById(decoded.id);
 
     if (!currentUser) {
       return res.status(401).json({
@@ -136,7 +132,10 @@ const requireRole = (allowedRoles = []) => {
 
 module.exports = {
   JWT_SECRET,
+  jwtSecretConfigured,
   authLimiter,
+  otpVerificationLimiter,
   verifyToken,
+  requireDatabase,
   requireRole
 };

@@ -114,6 +114,8 @@ const milkBatchSchema = new mongoose.Schema({
     required: [true, 'Farmer ID is required'],
     index: true
   },
+  idempotencyKey: { type: String, default: undefined },
+  requestHash: { type: String, default: '' },
   farmerName: {
     type: String,
     required: true,
@@ -176,10 +178,13 @@ const milkBatchSchema = new mongoose.Schema({
 });
 
 // Compound & Single Indexes for high performance querying
-milkBatchSchema.index({ batchId: 1 }, { unique: true });
 milkBatchSchema.index({ farmerId: 1, collectionDate: -1 });
 milkBatchSchema.index({ agentId: 1, status: 1 });
 milkBatchSchema.index({ status: 1, collectionDate: -1 });
+milkBatchSchema.index(
+  { farmerId: 1, idempotencyKey: 1 },
+  { unique: true, partialFilterExpression: { idempotencyKey: { $type: 'string' } } }
+);
 
 // Instance method to add audit log
 milkBatchSchema.methods.addAuditLog = function(fromStatus, toStatus, changedBy, changedById, reason, remarks) {

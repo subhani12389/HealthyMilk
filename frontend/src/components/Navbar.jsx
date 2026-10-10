@@ -23,7 +23,7 @@ export default function Navbar() {
   const fetchNotifications = async () => {
     if (!user) return;
     try {
-      const data = await apiFetch(`/api/notifications?userId=${user.id}`);
+      const data = await apiFetch(`/api/notifications?limit=20`, { noCache: true });
       if (data && data.success) {
         setNotifications(data.notifications || []);
         setUnreadCount(data.unreadCount || 0);
@@ -55,12 +55,14 @@ export default function Navbar() {
 
   const markAllAsRead = async () => {
     try {
-      await apiFetch('/api/notifications/mark-read', {
-        method: 'POST',
-        body: JSON.stringify({ userId: user?.id })
+      const data = await apiFetch('/api/notifications/mark-all-read', {
+        method: 'PUT',
+        body: JSON.stringify({})
       });
-      setUnreadCount(0);
-      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      if (data?.success) {
+        setUnreadCount(0);
+        setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      }
     } catch (err) {
       console.error(err);
     }

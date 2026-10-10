@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
@@ -19,7 +19,12 @@ export default function AdminDashboard() {
   const [dashboardData, setDashboardData] = useState(null);
   const [batches, setBatches] = useState([]);
   const [rejectedQueue, setRejectedQueue] = useState([]);
+  const [qualityBatches, setQualityBatches] = useState([]);
+  const [recordTotals, setRecordTotals] = useState({ batches: 0, rejections: 0, quality: 0 });
   const [loading, setLoading] = useState(true);
+  const [recordsLoading, setRecordsLoading] = useState(true);
+  const recordRequestId = useRef(0);
+  const recordsAbortController = useRef(null);
 
   // Filtering & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -46,31 +51,69 @@ export default function AdminDashboard() {
       const data = await apiFetch('/api/admin/dashboard');
       if (data && data.success) {
         setDashboardData(data);
-        setBatches(data.batches || []);
-        setRejectedQueue(data.rejectedQueue || []);
+      } else {
+        showToast(data?.message || 'Unable to load admin dashboard.', 'error');
       }
     } catch (err) {
       console.error('Failed to load admin dashboard:', err);
+      showToast('Unable to load admin dashboard. Please try again.', 'error');
     } finally {
       setLoading(false);
     }
+  };
+
+  const fetchAdminRecords = async () => {
+    recordsAbortController.current?.abort();
+    const requestId = ++recordRequestId.current;
+    const controller = new AbortController();
+    recordsAbortController.current = controller;
+    const kind = activeTab === 'rejections' ? 'rejections' : activeTab === 'quality' ? 'quality' : 'batches';
+    const page = kind === 'rejections' ? rejectionPage : kind === 'quality' ? qualityPage : batchPage;
+    const params = new URLSearchParams({
+      kind,
+      page: String(page),
+      pageSize: String(PAGE_SIZE),
+      search: kind === 'batches' ? searchQuery : ''
+    });
+    if (kind === 'batches') params.set('status', statusFilter);
+
+    setRecordsLoading(true);
+    const data = await apiFetch(`/api/admin/records?${params.toString()}`, {
+      noCache: true,
+      signal: controller.signal
+    });
+    if (requestId !== recordRequestId.current) return;
+
+    if (data?.success) {
+      const records = Array.isArray(data.records) ? data.records : [];
+      if (kind === 'rejections') {
+        setRejectedQueue(records);
+        setRecordTotals(prev => ({ ...prev, rejections: data.totalItems || 0 }));
+      } else if (kind === 'quality') {
+        setQualityBatches(records);
+        setRecordTotals(prev => ({ ...prev, quality: data.totalItems || 0 }));
+      } else {
+        setBatches(records);
+        setRecordTotals(prev => ({ ...prev, batches: data.totalItems || 0 }));
+      }
+    } else {
+      showToast(data?.message || 'Unable to load registry records.', 'error');
+    }
+    setRecordsLoading(false);
   };
 
   useEffect(() => {
     fetchAdminData();
   }, []);
 
-  // Filtered Batches List
-  const filteredBatches = batches.filter(batch => {
-    const matchesStatus = statusFilter === 'All' || batch.status?.toLowerCase() === statusFilter.toLowerCase();
-    const q = searchQuery.toLowerCase();
-    const matchesSearch = !searchQuery || 
-      (batch.batchId && batch.batchId.toLowerCase().includes(q)) ||
-      (batch.farmerName && batch.farmerName.toLowerCase().includes(q)) ||
-      (batch.farmName && batch.farmName.toLowerCase().includes(q)) ||
-      (batch.agentName && batch.agentName.toLowerCase().includes(q));
-    return matchesStatus && matchesSearch;
-  });
+  useEffect(() => {
+    const timer = setTimeout(fetchAdminRecords, searchQuery ? 250 : 0);
+    return () => {
+      clearTimeout(timer);
+      recordsAbortController.current?.abort();
+      recordRequestId.current += 1;
+    };
+  }, [activeTab, batchPage, rejectionPage, qualityPage, searchQuery, statusFilter]);
 
   // Handle Admin Review Submission
   const handleReviewSubmit = async (e) => {
@@ -95,6 +138,7 @@ export default function AdminDashboard() {
         setReviewBatch(null);
         setReviewRemarks('');
         fetchAdminData();
+        fetchAdminRecords();
       } else {
         showToast(data?.message || 'Failed to submit review.', 'error');
       }
@@ -128,11 +172,11 @@ export default function AdminDashboard() {
     totalLitersCollected: batches.reduce((acc, c) => acc + (c.liters || 0), 0)
   };
 
-  // Paginated Slices
-  const paginatedBatches = filteredBatches.slice((batchPage - 1) * PAGE_SIZE, batchPage * PAGE_SIZE);
-  const paginatedRejections = rejectedQueue.slice((rejectionPage - 1) * PAGE_SIZE, rejectionPage * PAGE_SIZE);
-  const qualityList = batches.filter(b => b.qualityTest);
-  const paginatedQuality = qualityList.slice((qualityPage - 1) * PAGE_SIZE, qualityPage * PAGE_SIZE);
+  const filteredBatches = batches;
+  const paginatedBatches = batches;
+  const paginatedRejections = rejectedQueue;
+  const qualityList = qualityBatches;
+  const paginatedQuality = qualityBatches;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
@@ -154,7 +198,7 @@ export default function AdminDashboard() {
         </div>
 
         <button
-          onClick={() => { fetchAdminData(); showToast('Dashboard data refreshed.', 'info'); }}
+          onClick={() => { fetchAdminData(); fetchAdminRecords(); showToast('Dashboard data refreshed.', 'info'); }}
           className="btn-secondary"
           style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.6rem 1rem' }}
         >
@@ -234,6 +278,12 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {recordsLoading && (
+        <div role="status" aria-live="polite" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+          Loading registry records...
+        </div>
+      )}
+
       {/* Main Content Tabs */}
       <div className="card" style={{ padding: '1.25rem' }}>
         
@@ -263,7 +313,7 @@ export default function AdminDashboard() {
               whiteSpace: 'nowrap'
             }}
           >
-            <Milk size={16} /> All Batches ({batches.length})
+            <Milk size={16} /> All Batches ({recordTotals.batches})
           </button>
 
           <button
@@ -283,7 +333,7 @@ export default function AdminDashboard() {
               whiteSpace: 'nowrap'
             }}
           >
-            <AlertTriangle size={16} /> Quarantined Rejections ({rejectedQueue.length})
+            <AlertTriangle size={16} /> Quarantined Rejections ({recordTotals.rejections})
           </button>
 
           <button
@@ -303,7 +353,7 @@ export default function AdminDashboard() {
               whiteSpace: 'nowrap'
             }}
           >
-            <ShieldCheck size={16} /> Quality Logs ({qualityList.length})
+            <ShieldCheck size={16} /> Quality Logs ({recordTotals.quality})
           </button>
         </div>
 
@@ -430,7 +480,7 @@ export default function AdminDashboard() {
 
                 <Pagination
                   currentPage={batchPage}
-                  totalItems={filteredBatches.length}
+                  totalItems={recordTotals.batches}
                   pageSize={PAGE_SIZE}
                   onPageChange={setBatchPage}
                 />
@@ -513,7 +563,7 @@ export default function AdminDashboard() {
 
                 <Pagination
                   currentPage={rejectionPage}
-                  totalItems={rejectedQueue.length}
+                  totalItems={recordTotals.rejections}
                   pageSize={PAGE_SIZE}
                   onPageChange={setRejectionPage}
                 />
@@ -572,7 +622,7 @@ export default function AdminDashboard() {
 
                 <Pagination
                   currentPage={qualityPage}
-                  totalItems={qualityList.length}
+                  totalItems={recordTotals.quality}
                   pageSize={PAGE_SIZE}
                   onPageChange={setQualityPage}
                 />

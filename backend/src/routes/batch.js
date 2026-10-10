@@ -1,275 +1,178 @@
 const express = require('express');
 const router = express.Router();
-const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
-const { milkBatches, generateBatchId, notifications } = require('../store');
+const User = require('../models/User');
+const { verifyToken, requireRole } = require('../middleware/authMiddleware');
+const { getPagination, paginationResult } = require('../utils/pagination');
+const { generateBatchId } = require('../utils/batchId');
 
-// GET /api/batches - List and filter batches
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, requireRole(['admin', 'farmer', 'delivery_agent']), async (req, res) => {
   try {
-    const { status, farmerId, agentId, search } = req.query;
-    
-    // Attempt to query MongoDB first if connected
-    let batches = [];
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const query = {};
-        if (status && status !== 'all' && status !== 'All') {
-          query.status = status;
-        }
-        if (farmerId) {
-          query.farmerId = farmerId;
-        }
-        if (agentId) {
-          query.agentId = agentId;
-        }
-        if (search) {
-          const regex = new RegExp(search, 'i');
-          query.$or = [
-            { batchId: regex },
-            { farmerName: regex },
-            { farmName: regex },
-            { agentName: regex }
-          ];
-        }
-
-        batches = await MilkBatch.find(query).sort({ collectionDate: -1 }).lean();
-      } catch (dbErr) {
-        batches = [];
-      }
+    const { page, limit, skip } = getPagination(req.query);
+    const query = {};
+    if (req.user.role === 'farmer') query.farmerId = req.user.id;
+    if (req.user.role === 'delivery_agent') query.agentId = req.user.id;
+    if (req.query.status && !['all', 'All'].includes(req.query.status)) query.status = req.query.status;
+    if (req.query.farmerId && req.user.role === 'admin') query.farmerId = req.query.farmerId;
+    if (req.query.agentId && req.user.role === 'admin') query.agentId = req.query.agentId;
+    const search = String(req.query.search || '').trim().slice(0, 100);
+    if (search) {
+      const expression = new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = ['batchId', 'farmerName', 'farmName', 'agentName'].map(field => ({ [field]: expression }));
     }
-
-    if (!batches || batches.length === 0) {
-      let filtered = [...milkBatches];
-      if (status && status !== 'all' && status !== 'All') {
-        filtered = filtered.filter(b => b.status.toLowerCase() === status.toLowerCase());
-      }
-      if (farmerId) {
-        filtered = filtered.filter(b => b.farmerId === farmerId);
-      }
-      if (agentId) {
-        filtered = filtered.filter(b => b.agentId === agentId);
-      }
-      if (search) {
-        const s = search.toLowerCase();
-        filtered = filtered.filter(b => 
-          (b.batchId && b.batchId.toLowerCase().includes(s)) ||
-          (b.farmerName && b.farmerName.toLowerCase().includes(s)) ||
-          (b.farmName && b.farmName.toLowerCase().includes(s)) ||
-          (b.agentName && b.agentName.toLowerCase().includes(s))
-        );
-      }
-      batches = filtered;
-    }
-
+    const [batches, totalItems] = await Promise.all([
+      MilkBatch.find(query).sort({ collectionDate: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+      MilkBatch.countDocuments(query)
+    ]);
     return res.json({
       success: true,
       count: batches.length,
-      batches
+      batches,
+      pagination: paginationResult(page, limit, totalItems)
     });
-  } catch (err) {
-    console.error('Error fetching batches:', err);
-    return res.status(500).json({ success: false, message: 'Server error retrieving batches.' });
+  } catch (error) {
+    console.error('Error fetching batches:', error);
+    return res.status(500).json({ success: false, message: 'Unable to retrieve batches.' });
   }
 });
 
-// GET /api/batches/:batchId - Single batch traceability details
-router.get('/:batchId', async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    let batch = null;
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        batch = await MilkBatch.findOne({ batchId }).lean();
-      } catch (dbErr) {}
-    }
-
-    if (!batch) {
-      batch = milkBatches.find(b => b.batchId === batchId || b.id === batchId);
-    }
-
-    if (!batch) {
-      return res.status(404).json({ success: false, message: `Milk Batch ${batchId} not found.` });
-    }
-
-    return res.json({
-      success: true,
-      batch
-    });
-  } catch (err) {
-    console.error('Error retrieving batch details:', err);
-    return res.status(500).json({ success: false, message: 'Server error retrieving batch details.' });
-  }
-});
-
-// POST /api/batches/create - Create new Milk Batch
-router.post('/create', async (req, res) => {
-  try {
-    const { farmerId, farmerName, farmName, farmLocation, agentId, agentName, liters, notes } = req.body;
-    
-    const qty = parseFloat(liters);
-    if (!qty || qty <= 0) {
-      return res.status(400).json({ success: false, message: 'Invalid milk quantity. Must be greater than 0.' });
-    }
-
-    const newBatchId = generateBatchId();
-
-    const batchDoc = {
-      batchId: newBatchId,
-      farmerId: farmerId || 'farmer_1',
-      farmerName: farmerName || 'Dairy Farmer',
-      farmName: farmName || 'Organic Farm',
-      farmLocation: farmLocation || 'Kaira Valley, Anand',
-      agentId: agentId || 'agent_1',
-      agentName: agentName || 'Assigned Delivery Agent',
-      liters: qty,
-      status: 'Collected',
-      collectionDate: new Date().toISOString(),
-      notes: notes || 'Morning collection',
-      qualityTest: null,
-      qualityHistory: [],
-      rejection: null,
-      auditHistory: [
-        {
-          fromStatus: 'None',
-          toStatus: 'Collected',
-          changedBy: farmerName || 'Farmer',
-          changedById: farmerId || 'farmer_1',
-          changedAt: new Date().toISOString(),
-          reason: 'Initial collection batch logged',
-          remarks: `Generated unique batch ID: ${newBatchId}`
-        }
-      ]
-    };
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        const created = new MilkBatch(batchDoc);
-        await created.save();
-      } catch (dbErr) {
-        console.warn('DB Batch save fallback:', dbErr.message);
-      }
-    }
-
-    milkBatches.unshift(batchDoc);
-
-    return res.status(201).json({
-      success: true,
-      message: `Milk Batch ${newBatchId} created successfully!`,
-      batch: batchDoc
-    });
-  } catch (err) {
-    console.error('Error creating milk batch:', err);
-    return res.status(500).json({ success: false, message: 'Server error creating milk batch.' });
-  }
-});
-
-// PUT /api/batches/:batchId/status - Update batch status with audit record
-router.put('/:batchId/status', async (req, res) => {
-  try {
-    const { batchId } = req.params;
-    const { newStatus, changedBy, changedById, reason, remarks } = req.body;
-
-    const validStatuses = ['Collected', 'Quality Checked', 'Accepted', 'Rejected', 'In Transit', 'Delivered'];
-    if (!validStatuses.includes(newStatus)) {
-      return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
-    }
-
-    let batch = null;
-    if (mongoose.connection.readyState === 1) {
-      try {
-        batch = await MilkBatch.findOne({ batchId });
-        if (batch) {
-          const prevStatus = batch.status;
-          batch.status = newStatus;
-          batch.addAuditLog(prevStatus, newStatus, changedBy, changedById, reason, remarks);
-          await batch.save();
-        }
-      } catch (dbErr) {}
-    }
-
-    const memBatch = milkBatches.find(b => b.batchId === batchId || b.id === batchId);
-    if (memBatch) {
-      const prevStatus = memBatch.status;
-      memBatch.status = newStatus;
-      if (!memBatch.auditHistory) memBatch.auditHistory = [];
-      memBatch.auditHistory.unshift({
-        fromStatus: prevStatus,
-        toStatus: newStatus,
-        changedBy: changedBy || 'Delivery Agent',
-        changedById: changedById || '',
-        changedAt: new Date().toISOString(),
-        reason: reason || 'Status updated',
-        remarks: remarks || ''
-      });
-    }
-
-    if (!batch && !memBatch) {
-      return res.status(404).json({ success: false, message: 'Milk Batch not found.' });
-    }
-
-    return res.json({
-      success: true,
-      message: `Batch ${batchId} status updated to ${newStatus}`,
-      batch: batch || memBatch
-    });
-  } catch (err) {
-    console.error('Error updating batch status:', err);
-    return res.status(500).json({ success: false, message: 'Server error updating batch status.' });
-  }
-});
-
-// GET /api/batches/trace/:batchId - Public QR Traceability Timeline & Quality Certificate
 router.get('/trace/:batchId', async (req, res) => {
   try {
-    const { batchId } = req.params;
-    let batch = null;
-
-    if (mongoose.connection.readyState === 1) {
-      try {
-        batch = await MilkBatch.findOne({ batchId }).lean();
-      } catch (e) {}
-    }
-
-    if (!batch) {
-      batch = milkBatches.find(b => b.batchId === batchId || b.id === batchId);
-    }
-
-    if (!batch) {
-      return res.status(404).json({ success: false, message: `Batch ${batchId} not found.` });
-    }
-
-    const traceability = {
-      batchId: batch.batchId,
-      farmer: {
-        name: batch.farmerName,
-        farmName: batch.farmName,
-        location: batch.farmLocation
-      },
-      agentName: batch.agentName,
-      liters: batch.liters,
-      status: batch.status,
-      collectionDate: batch.collectionDate,
-      qualityTest: batch.qualityTest || {
-        fatPercentage: 4.5,
-        snfPercentage: 8.8,
-        lactometerReading: 30.0,
-        temperature: 4.0,
-        qualityScore: 92,
-        qualityStatus: 'Passed'
-      },
-      timeline: (batch.auditHistory && batch.auditHistory.length > 0) ? batch.auditHistory : [
-        { fromStatus: 'None', toStatus: 'Collected', changedBy: batch.farmerName, changedAt: batch.collectionDate, reason: 'Batch collected from farm' }
-      ]
-    };
-
+    const batch = await MilkBatch.findOne({ batchId: req.params.batchId })
+      .select('batchId farmerName farmName farmLocation agentName liters status collectionDate qualityTest auditHistory')
+      .lean();
+    if (!batch) return res.status(404).json({ success: false, message: `Batch ${req.params.batchId} not found.` });
     return res.json({
       success: true,
-      traceability
+      traceability: {
+        batchId: batch.batchId,
+        farmer: {
+          name: batch.farmerName,
+          farmName: batch.farmName,
+          location: batch.farmLocation
+        },
+        agentName: batch.agentName,
+        liters: batch.liters,
+        status: batch.status,
+        collectionDate: batch.collectionDate,
+        qualityTest: batch.qualityTest,
+        timeline: batch.auditHistory
+      }
     });
-  } catch (err) {
-    return res.status(500).json({ success: false, message: 'Error retrieving traceability details.' });
+  } catch (error) {
+    console.error('Error loading public batch trace:', error);
+    return res.status(500).json({ success: false, message: 'Unable to retrieve traceability information.' });
+  }
+});
+
+router.get('/:batchId', verifyToken, requireRole(['admin', 'farmer', 'delivery_agent']), async (req, res) => {
+  try {
+    const batch = await MilkBatch.findOne({ batchId: req.params.batchId }).lean();
+    if (!batch) return res.status(404).json({ success: false, message: `Milk Batch ${req.params.batchId} not found.` });
+    if (req.user.role === 'farmer' && batch.farmerId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'You may only access your own batches.' });
+    }
+    if (req.user.role === 'delivery_agent' && batch.agentId && batch.agentId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'This batch is assigned to another agent.' });
+    }
+    return res.json({ success: true, batch });
+  } catch (error) {
+    console.error('Error retrieving batch details:', error);
+    return res.status(500).json({ success: false, message: 'Unable to retrieve batch details.' });
+  }
+});
+
+router.post('/create', verifyToken, requireRole(['farmer', 'admin']), async (req, res) => {
+  try {
+    res.set('Deprecation', 'true');
+    res.set('Link', '</api/farmer/request-pickup>; rel="successor-version"');
+    const { farmerName, farmName, farmLocation, liters, notes } = req.body;
+    const quantity = Number(liters);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return res.status(400).json({ success: false, message: 'Milk quantity must be greater than 0.' });
+    }
+    const farmerId = req.user.role === 'farmer' ? req.user.id : String(req.body.farmerId || '');
+    if (!farmerId || !(await User.exists({ _id: farmerId, role: 'farmer' }))) {
+      return res.status(400).json({ success: false, message: 'A valid farmer account is required.' });
+    }
+    const farmer = await User.findById(farmerId).select('name farmName location').lean();
+    let batch;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        batch = await MilkBatch.create({
+          batchId: generateBatchId(),
+          farmerId,
+          farmerName: farmerName || farmer.name,
+          farmName: farmName || farmer.farmName,
+          farmLocation: farmLocation || farmer.location,
+          liters: quantity,
+          status: 'Collected',
+          notes: notes || '',
+          auditHistory: [{
+            fromStatus: 'None',
+            toStatus: 'Collected',
+            changedBy: req.user.name,
+            changedById: req.user.id,
+            reason: 'Initial collection batch logged'
+          }]
+        });
+        break;
+      } catch (error) {
+        if (error.code !== 11000 || attempt === 2) throw error;
+      }
+    }
+    return res.status(201).json({
+      success: true,
+      message: `Milk Batch ${batch.batchId} created successfully!`,
+      batch
+    });
+  } catch (error) {
+    console.error('Error creating milk batch:', error);
+    return res.status(500).json({ success: false, message: 'Unable to create milk batch.' });
+  }
+});
+
+router.put('/:batchId/status', verifyToken, requireRole(['admin', 'delivery_agent']), async (req, res) => {
+  try {
+    const { newStatus, reason, remarks } = req.body;
+    const previousStatus = newStatus === 'In Transit' ? 'Accepted' : newStatus === 'Delivered' ? 'In Transit' : '';
+    if (!previousStatus) {
+      return res.status(400).json({ success: false, message: 'Only accepted batches can enter transit, and only in-transit batches can be delivered.' });
+    }
+    const batch = await MilkBatch.findOne({ batchId: req.params.batchId });
+    if (!batch) return res.status(404).json({ success: false, message: 'Milk batch not found.' });
+    if (req.user.role === 'delivery_agent' && batch.agentId !== req.user.id) {
+      return res.status(403).json({ success: false, message: 'This batch is assigned to another delivery agent.' });
+    }
+    if (batch.status !== previousStatus) {
+      return res.status(409).json({ success: false, message: `Batch must be ${previousStatus} before it can become ${newStatus}.` });
+    }
+    const updatedBatch = await MilkBatch.findOneAndUpdate({
+      _id: batch._id,
+      status: previousStatus,
+      ...(req.user.role === 'delivery_agent' ? { agentId: req.user.id } : {})
+    }, {
+      $set: { status: newStatus },
+      $push: {
+        auditHistory: {
+          fromStatus: previousStatus,
+          toStatus: newStatus,
+          changedBy: req.user.name || 'System',
+          changedById: req.user.id,
+          reason: reason || '',
+          remarks: remarks || ''
+        }
+      }
+    }, { returnDocument: 'after' });
+    if (!updatedBatch) return res.status(409).json({ success: false, message: 'Milk batch status changed; refresh and retry.' });
+    return res.json({
+      success: true,
+      message: `Batch ${updatedBatch.batchId} status updated to ${newStatus}.`,
+      batch: updatedBatch
+    });
+  } catch (error) {
+    console.error('Error updating batch status:', error);
+    return res.status(500).json({ success: false, message: 'Unable to update batch status.' });
   }
 });
 

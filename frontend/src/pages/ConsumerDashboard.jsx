@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
@@ -10,7 +10,7 @@ import {
   Milk, Calendar, Clock, Settings, Truck, CheckCircle2, 
   Pause, Play, RefreshCw, Plus, Minus, MapPin, ShieldCheck, 
   Flame, Award, AlertCircle, Sparkles, ArrowRight, QrCode, 
-  Thermometer, Check, Loader2 
+  Thermometer, Check, Loader2, ShoppingCart
 } from 'lucide-react';
 
 export default function ConsumerDashboard() {
@@ -20,6 +20,7 @@ export default function ConsumerDashboard() {
   const [dashboardData, setDashboardData] = useState(null);
   const [subscription, setSubscription] = useState(null);
   const [historyList, setHistoryList] = useState([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   // Pagination for Delivery History
@@ -38,10 +39,19 @@ export default function ConsumerDashboard() {
   const [deliveryTimeSlot, setDeliveryTimeSlot] = useState('6:30 AM - 7:30 AM');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState('');
+  const [catalog, setCatalog] = useState([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [selectedProductId, setSelectedProductId] = useState('p1');
+  const [orderQuantity, setOrderQuantity] = useState(1);
+  const [orderPaymentMethod, setOrderPaymentMethod] = useState('UPI');
+  const [orderSubmitting, setOrderSubmitting] = useState(false);
+  const [orderHistory, setOrderHistory] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const orderRequestRef = useRef(null);
 
   const fetchConsumerData = async () => {
     try {
-      const data = await apiFetch(`/api/consumer/dashboard?consumerId=${user?.id}`);
+      const data = await apiFetch(`/api/consumer/dashboard?page=${historyPage}&limit=${PAGE_SIZE}`, { noCache: true });
       if (data && data.success) {
         setDashboardData(data);
         if (data.consumer) {
@@ -53,6 +63,7 @@ export default function ConsumerDashboard() {
           }
         }
         setHistoryList(data.history || []);
+        setHistoryTotal(data.pagination?.totalItems || 0);
       }
     } catch (err) {
       console.error(err);
@@ -63,19 +74,55 @@ export default function ConsumerDashboard() {
 
   useEffect(() => {
     fetchConsumerData();
-  }, [user?.id]);
+  }, [user?.id, historyPage]);
+
+  useEffect(() => {
+    if (activeTab !== 'orders') return;
+    let current = true;
+    setCatalogLoading(true);
+    apiFetch('/api/consumer/products', { noCache: true })
+      .then(data => {
+        if (current && data?.success) setCatalog(data.products || []);
+        else if (current) showToast(data?.message || 'Unable to load products.', 'error');
+      })
+      .catch(error => {
+        console.error(error);
+        if (current) showToast('Unable to load products.', 'error');
+      })
+      .finally(() => {
+        if (current) setCatalogLoading(false);
+      });
+    setOrdersLoading(true);
+    apiFetch('/api/consumer/orders?page=1&limit=5', { noCache: true })
+      .then(data => {
+        if (current && data?.success) setOrderHistory(data.orders || []);
+        else if (current) showToast(data?.message || 'Unable to load your order history.', 'error');
+      })
+      .catch(error => {
+        console.error(error);
+        if (current) showToast('Unable to load your order history.', 'error');
+      })
+      .finally(() => {
+        if (current) setOrdersLoading(false);
+      });
+    return () => { current = false; };
+  }, [activeTab, showToast]);
 
   // Toggle Pause / Resume
   const handleTogglePause = async () => {
-    if (actionLoading) return;
+    if (actionLoading || !subscription) return;
     setActionLoading(true);
     try {
-      const data = await apiFetch('/api/consumer/pause-subscription', {
+      const endpoint = subscription.status === 'Active'
+        ? '/api/consumer/subscription/pause'
+        : '/api/consumer/subscription/resume';
+      const data = await apiFetch(endpoint, {
         method: 'POST',
         body: JSON.stringify({ consumerId: user?.id })
       });
       if (data && data.success) {
         setSubscription(data.subscription);
+        await fetchConsumerData();
         showToast(data.message || (data.subscription?.status === 'Paused' ? 'Subscription paused.' : 'Subscription resumed.'), 'success');
       } else {
         showToast(data?.message || 'Failed to toggle subscription status.', 'error');
@@ -122,6 +169,7 @@ export default function ConsumerDashboard() {
         body: JSON.stringify({ consumerId: user?.id })
       });
       if (data && data.success) {
+        await fetchConsumerData();
         showToast('Milk delivered! 1 day deducted from subscription balance.', 'success');
         setSubscription(prev => ({
           ...prev,
@@ -193,6 +241,51 @@ export default function ConsumerDashboard() {
     }
   };
 
+  const handlePlaceOrder = async (event) => {
+    event.preventDefault();
+    if (orderSubmitting) return;
+    const product = catalog.find(item => item.id === selectedProductId);
+    const quantity = Number(orderQuantity);
+    if (!product || !Number.isFinite(quantity) || quantity <= 0 || quantity > 100) {
+      showToast('Choose a product and a quantity from 0.1 to 100.', 'error');
+      return;
+    }
+    const payload = {
+      items: [{ productId: product.id, quantity }],
+      deliveryAddress: address.trim(),
+      paymentMethod: orderPaymentMethod
+    };
+    const serializedPayload = JSON.stringify(payload);
+    if (!orderRequestRef.current || orderRequestRef.current.payload !== serializedPayload) {
+      orderRequestRef.current = { payload: serializedPayload, key: crypto.randomUUID() };
+    }
+
+    setOrderSubmitting(true);
+    try {
+      const result = await apiFetch('/api/consumer/order', {
+        method: 'POST',
+        body: serializedPayload,
+        headers: { 'Idempotency-Key': orderRequestRef.current.key }
+      });
+      if (!result?.success) {
+        showToast(result?.message || 'Unable to place your order.', 'error');
+        return;
+      }
+      setOrderHistory(previous => [
+        result.order,
+        ...previous.filter(order => order.orderId !== result.order.orderId)
+      ].slice(0, 5));
+      orderRequestRef.current = null;
+      showToast(result.message || 'Your order was placed successfully.', 'success');
+      await fetchConsumerData();
+    } catch (error) {
+      console.error('Order request failed:', error);
+      showToast('Unable to place your order. Please retry.', 'error');
+    } finally {
+      setOrderSubmitting(false);
+    }
+  };
+
   if (loading && !dashboardData) {
     return (
       <div style={{ maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
@@ -223,7 +316,7 @@ export default function ConsumerDashboard() {
   });
 
   // Paginated Slices
-  const paginatedHistory = historyList.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE);
+  const paginatedHistory = historyList;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '1200px', margin: '0 auto', width: '100%', boxSizing: 'border-box' }}>
@@ -517,6 +610,134 @@ export default function ConsumerDashboard() {
         </div>
       )}
 
+      {activeTab === 'orders' && (
+        <div className="grid-responsive-2">
+          <form className="card" onSubmit={handlePlaceOrder} aria-labelledby="consumer-order-title">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', marginBottom: '1.25rem' }}>
+              <ShoppingCart size={21} color="var(--accent-emerald)" />
+              <h3 id="consumer-order-title" style={{ fontSize: '1.15rem', fontWeight: 700 }}>Order farm-fresh products</h3>
+            </div>
+
+            {catalogLoading ? (
+              <div role="status" aria-live="polite">Loading products…</div>
+            ) : catalog.length === 0 ? (
+              <EmptyState title="Products are unavailable" description="Please refresh and try again." />
+            ) : (
+              <>
+                <label htmlFor="consumer-order-product" style={{ display: 'block', fontWeight: 700, marginBottom: '0.4rem' }}>
+                  Product
+                </label>
+                <select
+                  id="consumer-order-product"
+                  value={selectedProductId}
+                  onChange={event => setSelectedProductId(event.target.value)}
+                  required
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginBottom: '1rem' }}
+                >
+                  {catalog.map(product => (
+                    <option key={product.id} value={product.id}>
+                      {product.name} — ₹{product.price}/{product.unit}
+                    </option>
+                  ))}
+                </select>
+
+                <label htmlFor="consumer-order-quantity" style={{ display: 'block', fontWeight: 700, marginBottom: '0.4rem' }}>
+                  Quantity
+                </label>
+                <input
+                  id="consumer-order-quantity"
+                  type="number"
+                  min="0.1"
+                  max="100"
+                  step="0.1"
+                  value={orderQuantity}
+                  onChange={event => setOrderQuantity(event.target.value)}
+                  required
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginBottom: '1rem' }}
+                />
+
+                <label htmlFor="consumer-order-address" style={{ display: 'block', fontWeight: 700, marginBottom: '0.4rem' }}>
+                  Delivery address
+                </label>
+                <textarea
+                  id="consumer-order-address"
+                  value={address}
+                  onChange={event => setAddress(event.target.value)}
+                  required
+                  rows={3}
+                  style={{ width: '100%', resize: 'vertical', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginBottom: '1rem' }}
+                />
+
+                <label htmlFor="consumer-order-payment" style={{ display: 'block', fontWeight: 700, marginBottom: '0.4rem' }}>
+                  Payment method
+                </label>
+                <select
+                  id="consumer-order-payment"
+                  value={orderPaymentMethod}
+                  onChange={event => setOrderPaymentMethod(event.target.value)}
+                  style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--border-color)', background: 'var(--bg-primary)', color: 'var(--text-main)', marginBottom: '1rem' }}
+                >
+                  <option value="UPI">UPI</option>
+                  <option value="Cash on Delivery">Cash on Delivery</option>
+                </select>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Order total</span>
+                  <strong aria-live="polite">
+                    ₹{((catalog.find(product => product.id === selectedProductId)?.price || 0) * Number(orderQuantity || 0)).toFixed(2)}
+                  </strong>
+                </div>
+
+                <button
+                  type="submit"
+                  className="btn-primary"
+                  disabled={orderSubmitting || catalogLoading || !address.trim()}
+                  style={{ width: '100%', justifyContent: 'center', minHeight: '46px' }}
+                >
+                  {orderSubmitting ? <><Loader2 size={17} className="spin" /> Placing order…</> : 'Place Order'}
+                </button>
+              </>
+            )}
+          </form>
+
+          <div className="card" aria-live="polite">
+            <h3 style={{ fontSize: '1.15rem', fontWeight: 700, marginBottom: '0.75rem' }}>Recent orders & tracking</h3>
+            {ordersLoading ? (
+              <div role="status" aria-live="polite">Loading your orders…</div>
+            ) : orderHistory.length > 0 ? (
+              <div style={{ display: 'grid', gap: '0.8rem' }}>
+                {orderHistory.map(order => (
+                  <article key={order.orderId} style={{ border: '1px solid var(--border-color)', borderRadius: '10px', padding: '0.8rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                      <strong style={{ overflowWrap: 'anywhere' }}>{order.orderId}</strong>
+                      <span className="badge badge-success">{order.status}</span>
+                    </div>
+                    <p style={{ marginTop: '0.45rem', color: 'var(--text-muted)' }}>
+                      {(order.items || []).map(item => `${item.name} × ${item.quantity}`).join(', ')}
+                    </p>
+                    <p style={{ marginTop: '0.35rem' }}>Total: ₹{Number(order.totalAmount || 0).toFixed(2)}</p>
+                    {order.tracking?.length > 0 && (
+                      <ol aria-label={`Tracking updates for ${order.orderId}`} style={{ margin: '0.65rem 0 0 1.25rem', color: 'var(--text-muted)' }}>
+                        {order.tracking.map((entry, index) => (
+                          <li key={`${entry.status}-${entry.changedAt}-${index}`}>
+                            {entry.status}{entry.changedAt ? ` · ${new Date(entry.changedAt).toLocaleString()}` : ''}
+                          </li>
+                        ))}
+                      </ol>
+                    )}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                title="No orders yet"
+                description="Place an order to see confirmation and delivery tracking here."
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       {/* TAB 3: DELIVERY HISTORY */}
       {activeTab === 'history' && (
         <div className="card">
@@ -563,7 +784,7 @@ export default function ConsumerDashboard() {
 
               <Pagination
                 currentPage={historyPage}
-                totalItems={historyList.length}
+                totalItems={historyTotal}
                 pageSize={PAGE_SIZE}
                 onPageChange={setHistoryPage}
               />

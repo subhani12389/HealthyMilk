@@ -2,6 +2,7 @@
 // Features: Timeout Protection (AbortController), Memory Cache for GET, Mutation Invalidation, Safe Error Parsing
 
 const apiCache = new Map();
+const inFlightMutations = new Map();
 const CACHE_TTL_MS = 15000; // 15 seconds cache for idempotent GET requests
 
 export function invalidateApiCache(prefix = '') {
@@ -16,7 +17,30 @@ export function invalidateApiCache(prefix = '') {
   }
 }
 
-export async function apiFetch(endpoint, options = {}) {
+export function apiFetch(endpoint, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const body = options.body;
+  const canDedupe = method !== 'GET' &&
+    options.dedupe !== false &&
+    !options.signal &&
+    (body == null || typeof body === 'string' || typeof body === 'number' || typeof body === 'boolean');
+
+  if (!canDedupe) return performApiFetch(endpoint, options);
+
+  const token = localStorage.getItem('healthymilk_token') || '';
+  const bodyKey = typeof body === 'string' ? body : JSON.stringify(body);
+  const requestKey = `${method}|${endpoint}|${token}|${bodyKey || ''}`;
+  const existingRequest = inFlightMutations.get(requestKey);
+  if (existingRequest) return existingRequest;
+
+  const request = performApiFetch(endpoint, options).finally(() => {
+    inFlightMutations.delete(requestKey);
+  });
+  inFlightMutations.set(requestKey, request);
+  return request;
+}
+
+async function performApiFetch(endpoint, options = {}) {
   const token = localStorage.getItem('healthymilk_token');
   
   // Strips legacy absolute URLs to enforce clean relative endpoints
@@ -27,10 +51,11 @@ export async function apiFetch(endpoint, options = {}) {
   
   const url = cleanEndpoint.startsWith('/') ? cleanEndpoint : `/${cleanEndpoint}`;
   const method = (options.method || 'GET').toUpperCase();
+  const { noCache, timeout, dedupe, signal: callerSignal, ...fetchOptions } = options;
 
   // Cache Lookup for GET requests (unless explicitly disabled)
   const isGet = method === 'GET';
-  const shouldCache = isGet && !options.noCache;
+  const shouldCache = isGet && !noCache;
   const cacheKey = `${url}|${token || ''}`;
 
   if (shouldCache) {
@@ -42,8 +67,11 @@ export async function apiFetch(endpoint, options = {}) {
 
   // AbortController with 8-second timeout to prevent permanently hung requests
   const controller = new AbortController();
-  const timeoutMs = options.timeout || 8000;
+  const timeoutMs = timeout || 8000;
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort(callerSignal.reason);
+  if (callerSignal?.aborted) abortFromCaller();
+  else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
 
   const headers = {
     'Content-Type': 'application/json',
@@ -53,12 +81,11 @@ export async function apiFetch(endpoint, options = {}) {
 
   try {
     const res = await fetch(url, {
-      ...options,
+      ...fetchOptions,
+      method,
       headers,
       signal: controller.signal
     });
-
-    clearTimeout(timeoutId);
 
     // Auto-invalidate cache on mutation requests (POST, PUT, DELETE, PATCH)
     if (!isGet) {
@@ -68,7 +95,7 @@ export async function apiFetch(endpoint, options = {}) {
     const contentType = res.headers.get('content-type') || '';
     let data;
     if (contentType.includes('application/json')) {
-      data = await res.json();
+      data = res.status === 204 ? {} : await res.json();
     } else {
       const text = await res.text();
       data = { success: res.ok, message: text };
@@ -79,14 +106,22 @@ export async function apiFetch(endpoint, options = {}) {
       apiCache.set(cacheKey, { timestamp: Date.now(), data });
     }
 
+    if (!res.ok && data?.success !== false) {
+      data = {
+        ...data,
+        success: false,
+        message: 'The request could not be completed. Please try again.'
+      };
+    }
+
     return data;
   } catch (err) {
-    clearTimeout(timeoutId);
-
     if (err.name === 'AbortError') {
       return {
         success: false,
-        message: 'Request timed out. Please check your internet connection and retry.'
+        message: callerSignal?.aborted
+          ? 'Request cancelled.'
+          : 'Request timed out. Please check your internet connection and retry.'
       };
     }
 
@@ -95,5 +130,8 @@ export async function apiFetch(endpoint, options = {}) {
       success: false,
       message: 'Unable to connect to the server. Please check your internet connection or try again.'
     };
+  } finally {
+    clearTimeout(timeoutId);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
   }
 }

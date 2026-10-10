@@ -33,7 +33,7 @@
 
 ```text
 HealthyMilk/
-├── backend/      # Express.js API, store, and Supabase client
+├── backend/      # Express.js API, MongoDB Mongoose Models, and Routes
 ├── frontend/     # React + Vite application (Tailwind / Custom CSS)
 └── vercel.json   # Monorepo deployment config
 ```
@@ -46,7 +46,7 @@ HealthyMilk/
 | -------------- | ------------------------------------- |
 | Frontend       | React, Vite, JavaScript, Tailwind CSS |
 | Backend        | Node.js, Express.js                   |
-| Database       | Supabase / In-Memory Store            |
+| Database       | MongoDB (Mongoose ODM)                |
 | Authentication | JWT (JSON Web Token)                  |
 | Deployment     | Vercel                                |
 

@@ -1,575 +1,530 @@
 const express = require('express');
+const crypto = require('crypto');
 const router = express.Router();
-const mongoose = require('mongoose');
 const MilkBatch = require('../models/MilkBatch');
 const User = require('../models/User');
-const { deliveryTasks, milkLogs, milkBatches, users, transactions, notifications } = require('../store');
+const Transaction = require('../models/Transaction');
+const Delivery = require('../models/Delivery');
+const Order = require('../models/Order');
+const { verifyToken, requireRole } = require('../middleware/authMiddleware');
+const { createNotification } = require('../services/notificationService');
+const { getPagination, paginationResult } = require('../utils/pagination');
+const { withMongoTransaction, respondToDatabaseWriteError } = require('../config/db');
+const { getIdempotencyKey, hashPayload } = require('../utils/idempotency');
 
-// GET /api/delivery/dashboard?agentId=
+router.use(verifyToken, requireRole(['delivery_agent']));
+
 router.get('/dashboard', async (req, res) => {
-  const { agentId } = req.query;
-  let agent = users.find(u => u.id === agentId && (u.role === 'agent' || u.role === 'delivery_agent'));
-  if (!agent) {
-    agent = users.find(u => u.role === 'agent' || u.role === 'delivery_agent');
-  }
-
-  // Fetch batches for this agent or all active collection batches
-  let batches = [];
-  if (mongoose.connection.readyState === 1) {
-    try {
-      batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
-    } catch (e) {}
-  }
-
-  if (!batches || batches.length === 0) {
-    batches = [...milkBatches];
-  }
-
-  if (!agent) {
+  try {
+    const agentId = req.user.id;
+    const pickupPage = getPagination({ ...req.query, page: req.query.pickupPage || req.query.page }, 6);
+    const batchPage = getPagination({ ...req.query, page: req.query.batchPage || req.query.page }, 6);
+    const deliveryPage = getPagination({ ...req.query, page: req.query.deliveryPage || req.query.page }, 6);
+    const transactionPage = getPagination({ ...req.query, page: req.query.transactionPage || req.query.page }, 6);
+    const pickupFilter = { status: 'Collected', $or: [{ agentId }, { agentId: { $in: ['', null] } }] };
+    const deliveryFilter = { agentId, status: { $in: ['Assigned', 'Out for Delivery'] } };
+    const [agent, pickups, pickupCount, batches, deliveries, deliveryCount, transactions, transactionCount] = await Promise.all([
+      User.findById(agentId).select('name address vehicleNo assignedArea balance totalDeliveries bankDetails').lean(),
+      MilkBatch.find(pickupFilter).sort({ collectionDate: -1, _id: -1 }).skip(pickupPage.skip).limit(pickupPage.limit).lean(),
+      MilkBatch.countDocuments(pickupFilter),
+      MilkBatch.find({ agentId }).sort({ collectionDate: -1, _id: -1 }).skip(batchPage.skip).limit(batchPage.limit).lean(),
+      Delivery.find(deliveryFilter).sort({ createdAt: -1, _id: -1 }).skip(deliveryPage.skip).limit(deliveryPage.limit).lean(),
+      Delivery.countDocuments(deliveryFilter),
+      Transaction.find({ agentId }).sort({ timestamp: -1, _id: -1 }).skip(transactionPage.skip).limit(transactionPage.limit).lean(),
+      Transaction.countDocuments({ agentId })
+    ]);
+    if (!agent) return res.status(404).json({ success: false, message: 'Delivery agent account not found.' });
     return res.json({
       success: true,
-      agent: {
-        id: 'new_agent',
-        name: 'Delivery Agent',
-        email: 'agent@example.com',
-        assignedArea: 'Sector 14 & Green Valley',
-        vehicleNo: 'GJ-07-MK-4421',
-        balance: 0,
-        totalDeliveries: 0,
-        bankDetails: { accountNo: 'XXXX-XXXX-3341', ifsc: 'HDFC0001290', bankName: 'HDFC Bank' }
-      },
-      transactions: [],
-      farmerPickups: batches.map(b => ({
-        id: b.id || b.batchId,
-        batchId: b.batchId,
-        farmerId: b.farmerId,
-        farmerName: b.farmName || b.farmerName,
-        liters: b.liters,
-        status: b.status,
-        dateStr: new Date(b.collectionDate).toLocaleDateString() + ' ' + new Date(b.collectionDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        notes: b.notes,
-        qualityTest: b.qualityTest,
-        rejection: b.rejection
-      })),
-      consumerDeliveries: deliveryTasks,
-      batches
+      agent: { ...agent, id: agentId },
+      batches,
+      farmerPickups: pickups,
+      assignedPickups: pickups,
+      consumerDeliveries: deliveries,
+      transactions,
+      pagination: {
+        pickups: paginationResult(pickupPage.page, pickupPage.limit, pickupCount),
+        batches: paginationResult(batchPage.page, batchPage.limit, await MilkBatch.countDocuments({ agentId })),
+        deliveries: paginationResult(deliveryPage.page, deliveryPage.limit, deliveryCount),
+        transactions: paginationResult(transactionPage.page, transactionPage.limit, transactionCount)
+      }
     });
+  } catch (error) {
+    console.error('Error loading delivery dashboard:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load delivery dashboard.' });
   }
-
-  const agentTxs = transactions.filter(t => t.agentId === agent.id);
-
-  return res.json({
-    success: true,
-    agent: {
-      id: agent.id,
-      name: agent.name,
-      email: agent.email,
-      assignedArea: agent.assignedArea || 'Sector 14 & Green Valley',
-      vehicleNo: agent.vehicleNo || 'GJ-07-MK-4421',
-      balance: agent.balance || 0,
-      totalDeliveries: agent.totalDeliveries || 0,
-      bankDetails: agent.bankDetails || { accountNo: 'XXXX-XXXX-3341', ifsc: 'HDFC0001290', bankName: 'HDFC Bank' }
-    },
-    transactions: agentTxs,
-    farmerPickups: batches.map(b => ({
-      id: b.id || b.batchId,
-      batchId: b.batchId,
-      farmerId: b.farmerId,
-      farmerName: b.farmName || b.farmerName,
-      liters: b.liters,
-      status: b.status,
-      dateStr: new Date(b.collectionDate).toLocaleDateString() + ' ' + new Date(b.collectionDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      notes: b.notes,
-      qualityTest: b.qualityTest,
-      rejection: b.rejection
-    })),
-    consumerDeliveries: deliveryTasks,
-    batches
-  });
 });
 
-// GET /api/delivery/tasks
 router.get('/tasks', async (req, res) => {
-  let batches = [];
-  if (mongoose.connection.readyState === 1) {
-    try {
-      batches = await MilkBatch.find({}).sort({ collectionDate: -1 }).lean();
-    } catch (e) {}
-  }
-
-  if (!batches || batches.length === 0) {
-    batches = [...milkBatches];
-  }
-
-  return res.json({
-    success: true,
-    farmerPickups: batches,
-    consumerDeliveries: deliveryTasks
-  });
-});
-
-// POST /api/delivery/test-and-collect - Quality test, credit Farmer milk money & credit Agent delivery fee
-router.post('/test-and-collect', async (req, res) => {
-  const { pickupId, batchId, testedFat, testedSNF, lactometerReading, temperature, liters, agentName, agentId, remarks } = req.body;
-
-  const targetId = batchId || pickupId;
-  let batchDoc = null;
-  if (mongoose.connection.readyState === 1) {
-    try {
-      batchDoc = await MilkBatch.findOne({
-        $or: [
-          { batchId: targetId },
-          { id: targetId }
-        ]
-      });
-    } catch (e) {}
-  }
-
-  let memBatch = milkBatches.find(b => b.batchId === targetId || b.id === targetId);
-
-  const fat = parseFloat(testedFat);
-  const snf = parseFloat(testedSNF);
-  const lacto = parseFloat(lactometerReading) || 29.5;
-  const temp = parseFloat(temperature) !== undefined && !isNaN(parseFloat(temperature)) ? parseFloat(temperature) : 4.0;
-  const vol = parseFloat(liters) || (batchDoc ? batchDoc.liters : (memBatch ? memBatch.liters : 25));
-
-  // Validation
-  if (isNaN(fat) || fat < 0.5 || fat > 15.0) {
-    return res.status(400).json({ success: false, message: 'Invalid Fat %. Must be between 0.5% and 15.0%.' });
-  }
-  if (isNaN(snf) || snf < 4.0 || snf > 15.0) {
-    return res.status(400).json({ success: false, message: 'Invalid SNF %. Must be between 4.0% and 15.0%.' });
-  }
-  if (isNaN(lacto) || lacto < 15.0 || lacto > 38.0) {
-    return res.status(400).json({ success: false, message: 'Invalid Lactometer reading. Must be between 15.0 and 38.0.' });
-  }
-  if (isNaN(temp) || temp < -2.0 || temp > 45.0) {
-    return res.status(400).json({ success: false, message: 'Invalid Temperature. Must be between -2°C and 45°C.' });
-  }
-
-  // Dynamic Rate per Liter based on Fat & SNF
-  const baseRate = 45;
-  const fatDiff = fat - 3.5;
-  const snfDiff = snf - 8.5;
-  const ratePerLiter = Math.max(35, Math.round(baseRate + (fatDiff * 6) + (snfDiff * 4)));
-  const totalPrice = Math.round(vol * ratePerLiter);
-  const qualityScore = Math.min(100, Math.max(10, Math.round((fat / 4.5) * 45 + (snf / 8.5) * 45 + (lacto >= 28 ? 10 : 0))));
-  const qualityStatus = qualityScore >= 80 ? 'Passed' : qualityScore >= 60 ? 'Needs Review' : 'Rejected';
-
-  const testRecord = {
-    fatPercentage: fat,
-    snfPercentage: snf,
-    lactometerReading: lacto,
-    temperature: temp,
-    qualityScore,
-    qualityStatus,
-    ratePerLiter,
-    totalPrice,
-    testedAt: new Date(),
-    testedBy: agentName || 'Delivery Agent',
-    testedById: agentId || 'agent_1',
-    remarks: remarks || 'Optimal quality tested on-site'
-  };
-
-  const actualBatchId = batchDoc ? batchDoc.batchId : (memBatch ? memBatch.batchId : `HM-${Date.now()}`);
-  const farmerId = batchDoc ? batchDoc.farmerId : (memBatch ? memBatch.farmerId : 'farmer_1');
-
-  // Update DB Batch
-  if (batchDoc) {
-    const prevStatus = batchDoc.status;
-    batchDoc.liters = vol;
-    batchDoc.status = 'Accepted';
-    batchDoc.qualityTest = testRecord;
-    if (!batchDoc.qualityHistory) batchDoc.qualityHistory = [];
-    batchDoc.qualityHistory.push(testRecord);
-    batchDoc.agentId = agentId || batchDoc.agentId;
-    batchDoc.agentName = agentName || batchDoc.agentName;
-    batchDoc.addAuditLog(prevStatus, 'Accepted', agentName || 'Delivery Agent', agentId || 'agent_1', 'Quality test passed & accepted', remarks || '');
-    await batchDoc.save();
-  }
-
-  // Update Memory Batch
-  if (memBatch) {
-    const prevStatus = memBatch.status;
-    memBatch.liters = vol;
-    memBatch.status = 'Accepted';
-    memBatch.qualityTest = testRecord;
-    if (!memBatch.qualityHistory) memBatch.qualityHistory = [];
-    memBatch.qualityHistory.push(testRecord);
-    memBatch.agentId = agentId || memBatch.agentId;
-    memBatch.agentName = agentName || memBatch.agentName;
-    if (!memBatch.auditHistory) memBatch.auditHistory = [];
-    memBatch.auditHistory.unshift({
-      fromStatus: prevStatus,
-      toStatus: 'Accepted',
-      changedBy: agentName || 'Delivery Agent',
-      changedById: agentId || 'agent_1',
-      changedAt: new Date().toISOString(),
-      reason: 'Quality test passed & accepted',
-      remarks: remarks || ''
-    });
-  }
-
-  // Also update milkLogs for backward compatibility
-  const log = milkLogs.find(l => l.id === targetId || l.batchId === targetId);
-  if (log) {
-    log.fatPercentage = fat;
-    log.snfPercentage = snf;
-    log.lactometerReading = lacto;
-    log.temperature = temp;
-    log.ratePerLiter = ratePerLiter;
-    log.totalPrice = totalPrice;
-    log.qualityScore = qualityScore;
-    log.status = 'Tested & Picked Up by Agent';
-    log.agentName = agentName || 'Delivery Agent';
-  }
-
-  // Credit Farmer Account Balance
   try {
-    const farmerDoc = await User.findById(farmerId);
-    if (farmerDoc) {
-      farmerDoc.balance = (farmerDoc.balance || 0) + totalPrice;
-      await farmerDoc.save();
-    }
-  } catch (e) {}
-
-  const farmer = users.find(u => u.id === farmerId || u._id === farmerId);
-  if (farmer) {
-    farmer.balance = (farmer.balance || 0) + totalPrice;
-  }
-
-  transactions.unshift({
-    id: `tx_${Date.now()}`,
-    farmerId,
-    amount: totalPrice,
-    type: `Credit (Batch ${actualBatchId} - Verified by Agent)`,
-    date: new Date().toLocaleDateString(),
-    status: 'Completed',
-    reference: `DEP-${Math.floor(1000 + Math.random() * 9000)}-${actualBatchId}`
-  });
-
-  notifications.unshift({
-    id: `notif_${Date.now()}`,
-    userId: farmerId,
-    title: `Batch ${actualBatchId} Tested & Money Credited!`,
-    message: `Delivery Agent tested your ${vol}L batch (Fat: ${fat}%, SNF: ${snf}%, Temp: ${temp}°C). Rate: ₹${ratePerLiter}/L. ₹${totalPrice.toFixed(2)} credited to your balance! Quality Score: ${qualityScore}/100 (${qualityStatus}).`,
-    time: 'Just now',
-    read: false,
-    type: 'success'
-  });
-
-  // Credit Delivery Agent Fee (₹50 per verified collection)
-  const agent = users.find(u => u.id === agentId || u.role === 'agent' || u.role === 'delivery_agent');
-  if (agent) {
-    agent.balance = (agent.balance || 0) + 50;
-    agent.totalDeliveries = (agent.totalDeliveries || 0) + 1;
-
-    transactions.unshift({
-      id: `tx_${Date.now()}`,
-      agentId: agent.id,
-      amount: 50,
-      type: `Credit (Pickup & Inspection Fee - Batch ${actualBatchId})`,
-      date: new Date().toLocaleDateString(),
-      status: 'Completed',
-      reference: `AG-${Math.floor(1000 + Math.random() * 9000)}`
+    const { page, limit, skip } = getPagination(req.query);
+    const agentId = req.user.id;
+    const pickupFilter = {
+      status: 'Collected',
+      $or: [{ agentId }, { agentId: { $in: ['', null] } }]
+    };
+    const [farmerPickups, pickupCount, consumerDeliveries, deliveryCount] = await Promise.all([
+      MilkBatch.find(pickupFilter).sort({ collectionDate: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+      MilkBatch.countDocuments(pickupFilter),
+      Delivery.find({ agentId, status: { $in: ['Assigned', 'Out for Delivery'] } })
+        .sort({ createdAt: -1, _id: -1 }).skip(skip).limit(limit).lean(),
+      Delivery.countDocuments({ agentId, status: { $in: ['Assigned', 'Out for Delivery'] } })
+    ]);
+    return res.json({
+      success: true,
+      farmerPickups,
+      consumerDeliveries,
+      pagination: {
+        pickups: paginationResult(page, limit, pickupCount),
+        deliveries: paginationResult(page, limit, deliveryCount)
+      }
     });
-
-    notifications.unshift({
-      id: `notif_${Date.now()}`,
-      userId: agent.id,
-      title: 'Delivery Fee Credited',
-      message: `₹50.00 collection fee added to your balance for inspecting Batch ${actualBatchId}.`,
-      time: 'Just now',
-      read: false,
-      type: 'success'
-    });
+  } catch (error) {
+    console.error('Error loading delivery tasks:', error);
+    return res.status(500).json({ success: false, message: 'Unable to load delivery tasks.' });
   }
-
-  return res.json({
-    success: true,
-    message: `Batch ${actualBatchId} verified (Fat: ${fat}%, SNF: ${snf}%, Temp: ${temp}°C). Rate: ₹${ratePerLiter}/L. ₹${totalPrice.toFixed(2)} credited to Farmer! Agent fee ₹50 credited.`,
-    batch: batchDoc || memBatch,
-    batchId: actualBatchId,
-    qualityTest: testRecord,
-    creditedAmount: totalPrice,
-    calculatedRate: ratePerLiter,
-    updatedFarmerBalance: farmer ? farmer.balance : null,
-    updatedAgentBalance: agent ? agent.balance : null
-  });
 });
 
-// POST /api/delivery/reject-batch - Delivery Agent rejects batch with reason, remarks, evidence
+router.post('/test-and-collect', async (req, res) => {
+  try {
+    const { pickupId, batchId, testedFat, testedSNF, lactometerReading, temperature, liters, remarks } = req.body;
+    const targetId = batchId || pickupId;
+    const batch = await MilkBatch.findOne({ batchId: targetId });
+    if (!batch) return res.status(404).json({ success: false, message: 'Milk batch not found.' });
+    if (batch.status !== 'Collected') {
+      return res.status(409).json({ success: false, message: 'This batch is no longer awaiting inspection.' });
+    }
+
+    const fat = Number(testedFat);
+    const snf = Number(testedSNF);
+    const lacto = lactometerReading == null ? 29.5 : Number(lactometerReading);
+    const temp = temperature == null ? 4 : Number(temperature);
+    const volume = liters == null ? batch.liters : Number(liters);
+    if (!Number.isFinite(fat) || fat < 0.5 || fat > 15) {
+      return res.status(400).json({ success: false, message: 'Invalid Fat %. Must be between 0.5% and 15.0%.' });
+    }
+    if (!Number.isFinite(snf) || snf < 4 || snf > 15) {
+      return res.status(400).json({ success: false, message: 'Invalid SNF %. Must be between 4.0% and 15.0%.' });
+    }
+    if (!Number.isFinite(lacto) || lacto < 15 || lacto > 38) {
+      return res.status(400).json({ success: false, message: 'Invalid Lactometer reading. Must be between 15.0 and 38.0.' });
+    }
+    if (!Number.isFinite(temp) || temp < -2 || temp > 45) {
+      return res.status(400).json({ success: false, message: 'Invalid Temperature. Must be between -2°C and 45°C.' });
+    }
+    if (!Number.isFinite(volume) || volume <= 0) {
+      return res.status(400).json({ success: false, message: 'Invalid milk volume.' });
+    }
+
+    const ratePerLiter = Math.max(35, Math.round(45 + ((fat - 3.5) * 6) + ((snf - 8.5) * 4)));
+    const totalPrice = Math.round(volume * ratePerLiter);
+    const qualityScore = Math.min(100, Math.max(10, Math.round((fat / 4.5) * 45 + (snf / 8.5) * 45 + (lacto >= 28 ? 10 : 0))));
+    const qualityStatus = qualityScore >= 80 ? 'Passed' : qualityScore >= 60 ? 'Needs Review' : 'Rejected';
+    const testRecord = {
+      fatPercentage: fat,
+      snfPercentage: snf,
+      lactometerReading: lacto,
+      temperature: temp,
+      qualityScore,
+      qualityStatus,
+      ratePerLiter,
+      totalPrice,
+      testedAt: new Date(),
+      testedBy: req.user.name,
+      testedById: req.user.id,
+      remarks: remarks || ''
+    };
+
+    const payment = await withMongoTransaction(async session => {
+      const farmerAccount = await User.findOne({ _id: batch.farmerId, role: 'farmer' }).session(session);
+      const agentAccount = await User.findOne({ _id: req.user.id, role: { $in: ['agent', 'delivery_agent'] } }).session(session);
+      if (!farmerAccount || !agentAccount) return { accountMissing: true };
+
+      const acceptedBatch = await MilkBatch.findOneAndUpdate({
+        batchId: targetId,
+        status: 'Collected',
+        $or: [{ agentId: req.user.id }, { agentId: '' }, { agentId: null }]
+      }, {
+        $set: {
+          liters: volume,
+          status: 'Accepted',
+          agentId: req.user.id,
+          agentName: req.user.name,
+          qualityTest: testRecord
+        },
+        $push: {
+          qualityHistory: testRecord,
+          auditHistory: {
+            fromStatus: 'Collected',
+            toStatus: 'Accepted',
+            changedBy: req.user.name,
+            changedById: req.user.id,
+            reason: 'Quality test passed and batch accepted',
+            remarks: remarks || ''
+          }
+        }
+      }, { returnDocument: 'after', session });
+      if (!acceptedBatch) return { batchChanged: true };
+
+      const farmer = await User.findByIdAndUpdate(
+        batch.farmerId,
+        { $inc: { balance: totalPrice } },
+        { returnDocument: 'after', session }
+      );
+      const agent = await User.findByIdAndUpdate(
+        req.user.id,
+        { $inc: { balance: 50, totalDeliveries: 1 } },
+        { returnDocument: 'after', session }
+      );
+      if (!farmer || !agent) throw new Error('A financial account disappeared during batch settlement.');
+      await Transaction.create([
+        {
+          farmerId: batch.farmerId,
+          amount: totalPrice,
+          type: `Credit (Batch ${batch.batchId} - Verified by Agent)`,
+          status: 'Completed',
+          reference: `BATCH-CREDIT-${batch.batchId}`
+        },
+        {
+          agentId: req.user.id,
+          amount: 50,
+          type: `Credit (Pickup & Inspection Fee - Batch ${batch.batchId})`,
+          status: 'Completed',
+          reference: `PICKUP-FEE-${batch.batchId}`
+        }
+      ], { session, ordered: true });
+      await createNotification({
+        userId: batch.farmerId,
+        role: 'farmer',
+        title: `Batch ${batch.batchId} tested and payment credited`,
+        message: `${volume}L passed quality inspection at ₹${ratePerLiter}/L; ₹${totalPrice.toFixed(2)} was credited.`,
+        type: 'success',
+        session
+      });
+      await createNotification({
+        userId: req.user.id,
+        role: 'delivery_agent',
+        title: 'Pickup inspection fee credited',
+        message: `₹50.00 credited for inspecting batch ${batch.batchId}.`,
+        type: 'success',
+        session
+      });
+      return { acceptedBatch, farmer, agent };
+    });
+    if (payment.accountMissing) {
+      return res.status(409).json({ success: false, message: 'The farmer or agent account is unavailable; no payment was made.' });
+    }
+    if (payment.batchChanged) {
+      return res.status(409).json({ success: false, message: 'This batch is no longer awaiting inspection or is assigned to another agent.' });
+    }
+    const { acceptedBatch, farmer, agent } = payment;
+    return res.json({
+      success: true,
+      message: `Batch ${batch.batchId} accepted and recorded.`,
+      batch: acceptedBatch.toObject(),
+      batchId: batch.batchId,
+      qualityTest: testRecord,
+      creditedAmount: totalPrice,
+      calculatedRate: ratePerLiter,
+      updatedFarmerBalance: farmer.balance,
+      updatedAgentBalance: agent.balance
+    });
+  } catch (error) {
+    return respondToDatabaseWriteError(res, error, 'Unable to complete milk inspection.');
+  }
+});
+
 router.post('/reject-batch', async (req, res) => {
   try {
-    const { pickupId, batchId, reason, remarks, evidencePhoto, agentName, agentId } = req.body;
-
+    const { pickupId, batchId, reason, remarks, evidencePhoto } = req.body;
     const validReasons = [
-      'Low quality reading',
-      'Abnormal Fat/SNF',
-      'Abnormal Lactometer Reading',
-      'Temperature issue',
-      'Contamination concern',
-      'Damaged/unsafe batch',
-      'Other'
+      'Low quality reading', 'Abnormal Fat/SNF', 'Abnormal Lactometer Reading',
+      'Temperature issue', 'Contamination concern', 'Damaged/unsafe batch', 'Other'
     ];
-
-    if (!reason || !validReasons.includes(reason)) {
-      return res.status(400).json({
-        success: false,
-        message: `Please select a valid rejection reason: ${validReasons.join(', ')}`
-      });
+    if (!validReasons.includes(reason)) {
+      return res.status(400).json({ success: false, message: `Please select a valid rejection reason: ${validReasons.join(', ')}` });
     }
-
     const targetId = batchId || pickupId;
-    let batchDoc = null;
-    if (mongoose.connection.readyState === 1) {
-      try {
-        batchDoc = await MilkBatch.findOne({
-          $or: [
-            { batchId: targetId },
-            { id: targetId }
-          ]
-        });
-      } catch (e) {}
+    const batch = await MilkBatch.findOne({ batchId: targetId });
+    if (!batch) return res.status(404).json({ success: false, message: `Batch ${targetId} not found.` });
+    if (batch.status !== 'Collected') {
+      return res.status(409).json({ success: false, message: 'This batch is no longer awaiting inspection.' });
     }
-
-    let memBatch = milkBatches.find(b => b.batchId === targetId || b.id === targetId);
-
-    if (!batchDoc && !memBatch) {
-      return res.status(404).json({ success: false, message: `Batch ${targetId} not found.` });
-    }
-
-    const actualBatchId = batchDoc ? batchDoc.batchId : memBatch.batchId;
-    const farmerId = batchDoc ? batchDoc.farmerId : memBatch.farmerId;
-    const farmerName = batchDoc ? batchDoc.farmerName : memBatch.farmerName;
-
-    const rejectionData = {
+    const rejection = {
       reason,
       remarks: remarks || 'Batch rejected during field inspection.',
-      agentId: agentId || 'agent_1',
-      agentName: agentName || 'Delivery Agent',
+      agentId: req.user.id,
+      agentName: req.user.name,
       rejectedAt: new Date(),
       evidencePhoto: evidencePhoto || '',
       reviewStatus: 'Pending'
     };
-
-    // Update DB Batch
-    if (batchDoc && mongoose.connection.readyState === 1) {
-      const prevStatus = batchDoc.status;
-      batchDoc.status = 'Rejected';
-      batchDoc.rejection = rejectionData;
-      batchDoc.addAuditLog(prevStatus, 'Rejected', agentName || 'Delivery Agent', agentId || 'agent_1', `Rejection: ${reason}`, remarks || '');
-      await batchDoc.save();
-    }
-
-    // Update Memory Batch
-    if (memBatch) {
-      const prevStatus = memBatch.status;
-      memBatch.status = 'Rejected';
-      memBatch.rejection = rejectionData;
-      if (!memBatch.auditHistory) memBatch.auditHistory = [];
-      memBatch.auditHistory.unshift({
-        fromStatus: prevStatus,
-        toStatus: 'Rejected',
-        changedBy: agentName || 'Delivery Agent',
-        changedById: agentId || 'agent_1',
-        changedAt: new Date().toISOString(),
-        reason: `Rejection: ${reason}`,
-        remarks: remarks || ''
-      });
-    }
-
-    // Update milkLogs
-    const log = milkLogs.find(l => l.id === targetId || l.batchId === targetId);
-    if (log) {
-      log.status = 'Rejected by Delivery Agent';
-    }
-
-    // IMPORTANT: Normal farmer milk payout is NOT credited for rejected batch!
-
-    // Credit inspection fee to Agent (₹30 for conducting test)
-    const agent = users.find(u => u.id === agentId || u.role === 'agent' || u.role === 'delivery_agent');
-    if (agent) {
-      agent.balance = (agent.balance || 0) + 30;
-      transactions.unshift({
-        id: `tx_${Date.now()}`,
-        agentId: agent.id,
+    const rejectedBatch = await withMongoTransaction(async session => {
+      const updatedBatch = await MilkBatch.findOneAndUpdate({
+        batchId: targetId,
+        status: 'Collected',
+        $or: [{ agentId: req.user.id }, { agentId: '' }, { agentId: null }]
+      }, {
+        $set: {
+          status: 'Rejected',
+          agentId: req.user.id,
+          agentName: req.user.name,
+          rejection
+        },
+        $push: {
+          auditHistory: {
+            fromStatus: 'Collected',
+            toStatus: 'Rejected',
+            changedBy: req.user.name,
+            changedById: req.user.id,
+            reason: `Rejection: ${reason}`,
+            remarks: remarks || ''
+          }
+        }
+      }, { returnDocument: 'after', session });
+      if (!updatedBatch) return null;
+      const agent = await User.findByIdAndUpdate(
+        req.user.id,
+        { $inc: { balance: 30 } },
+        { returnDocument: 'after', session }
+      );
+      if (!agent) throw new Error('The delivery agent account is unavailable.');
+      await Transaction.create([{
+        agentId: req.user.id,
         amount: 30,
-        type: `Credit (Inspection Fee - Rejected Batch ${actualBatchId})`,
-        date: new Date().toLocaleDateString(),
+        type: `Credit (Inspection Fee - Rejected Batch ${updatedBatch.batchId})`,
         status: 'Completed',
-        reference: `REJ-AG-${Math.floor(1000 + Math.random() * 9000)}`
+        reference: `REJECTION-FEE-${updatedBatch.batchId}`
+      }], { session, ordered: true });
+      await createNotification({
+        userId: updatedBatch.farmerId,
+        role: 'farmer',
+        title: `Milk batch ${updatedBatch.batchId} rejected`,
+        message: `Reason: ${reason}. ${remarks || 'Payment withheld pending admin review.'}`,
+        type: 'warning',
+        session
       });
-    }
-
-    // Notify Farmer of Rejection with full details
-    notifications.unshift({
-      id: `notif_${Date.now()}`,
-      userId: farmerId,
-      title: `⚠️ Milk Batch ${actualBatchId} Rejected`,
-      message: `Your milk batch ${actualBatchId} was rejected during inspection. Reason: "${reason}". Remarks: ${remarks || 'Standards check failed.'}. Payment withheld pending admin review.`,
-      time: 'Just now',
-      read: false,
-      type: 'warning'
+      await createNotification({
+        userId: 'admin',
+        role: 'admin',
+        title: `Rejection review required: ${updatedBatch.batchId}`,
+        message: `Batch from ${updatedBatch.farmerName} rejected by ${req.user.name}. Reason: ${reason}.`,
+        type: 'warning',
+        session
+      });
+      return updatedBatch;
     });
-
-    // Notify Admin Queue
-    notifications.unshift({
-      id: `notif_${Date.now()}`,
-      userId: 'admin',
-      title: `🚨 Rejection Alert: Batch ${actualBatchId}`,
-      message: `Batch ${actualBatchId} from ${farmerName} rejected by ${agentName || 'Agent'}. Reason: ${reason}. Awaiting admin review.`,
-      time: 'Just now',
-      read: false,
-      type: 'warning'
-    });
-
+    if (!rejectedBatch) return res.status(409).json({ success: false, message: 'This batch is no longer awaiting inspection or is assigned to another agent.' });
     return res.json({
       success: true,
-      message: `Batch ${actualBatchId} marked as Rejected. Reason: ${reason}. Farmer notified and batch quarantined.`,
-      batchId: actualBatchId,
-      rejection: rejectionData,
-      batch: batchDoc || memBatch
+      message: `Batch ${rejectedBatch.batchId} rejected and quarantined for review.`,
+      batchId: rejectedBatch.batchId,
+      rejection: rejectedBatch.rejection,
+      batch: rejectedBatch.toObject()
     });
-  } catch (err) {
-    console.error('Error rejecting batch:', err);
-    return res.status(500).json({ success: false, message: 'Server error processing batch rejection.' });
+  } catch (error) {
+    return respondToDatabaseWriteError(res, error, 'Unable to process batch rejection.');
   }
 });
 
-// POST /api/delivery/payout - Delivery Agent bank withdrawal
 router.post('/payout', async (req, res) => {
-  const { agentId, amount } = req.body;
-
-  const payoutAmt = parseFloat(amount);
-  if (isNaN(payoutAmt) || payoutAmt <= 0) {
-    return res.status(400).json({ success: false, message: 'Please enter a valid positive withdrawal amount.' });
-  }
-
-  let agent = null;
-  if (mongoose.connection.readyState === 1) {
-    try {
-      agent = await User.findById(agentId);
-    } catch (e) {}
-  }
-  if (!agent) {
-    agent = users.find(u => u.id === agentId || u._id === agentId) || users.find(u => u.role === 'agent' || u.role === 'delivery_agent');
-  }
-
-  if (!agent) {
-    agent = { id: agentId || 'agent_1', name: 'Delivery Agent', role: 'delivery_agent', balance: 0 };
-    users.push(agent);
-  }
-
-  if (payoutAmt > (agent.balance || 0)) {
-    return res.status(400).json({
-      success: false,
-      message: `Insufficient balance. Available: ₹${(agent.balance || 0).toFixed(2)}, Requested: ₹${payoutAmt.toFixed(2)}`
-    });
-  }
-
-  agent.balance = (agent.balance || 0) - payoutAmt;
-  if (agent.save && mongoose.connection.readyState === 1) {
-    try {
-      await agent.save();
-    } catch (e) {}
-  }
-
-  const newTx = {
-    id: `tx_${Date.now()}`,
-    agentId: agent.id || (agent._id ? agent._id.toString() : agentId),
-    amount: payoutAmt,
-    type: 'Bank Withdrawal',
-    date: new Date().toLocaleDateString(),
-    status: 'Processing',
-    reference: `WTH-AG-${Math.floor(1000 + Math.random() * 9000)}`
-  };
-
-  transactions.unshift(newTx);
-
-  notifications.unshift({
-    id: `notif_${Date.now()}`,
-    userId: agent.id || (agent._id ? agent._id.toString() : agentId),
-    title: 'Agent Payout Requested',
-    message: `Withdrawal of ₹${payoutAmt.toFixed(2)} requested to bank account.`,
-    time: 'Just now',
-    read: false,
-    type: 'info'
-  });
-
-  return res.json({
-    success: true,
-    message: `Payout request of ₹${payoutAmt.toFixed(2)} initiated successfully!`,
-    remainingBalance: agent.balance,
-    transaction: newTx
-  });
-});
-
-// POST /api/delivery/update-status
-router.post('/update-status', async (req, res) => {
-  const { taskId, status, type, agentId } = req.body;
-
-  if (type === 'farmer_pickup') {
-    let batchDoc = null;
-    if (mongoose.connection.readyState === 1) {
-      try {
-        batchDoc = await MilkBatch.findOne({ $or: [{ batchId: taskId }, { id: taskId }] });
-        if (batchDoc) {
-          const prev = batchDoc.status;
-          batchDoc.status = status;
-          batchDoc.addAuditLog(prev, status, 'Delivery Agent', agentId, `Status updated to ${status}`);
-          await batchDoc.save();
-        }
-      } catch (e) {}
+  try {
+    const amount = Number(req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid positive withdrawal amount.' });
     }
-
-    const mem = milkBatches.find(b => b.batchId === taskId || b.id === taskId);
-    if (mem) {
-      const prev = mem.status;
-      mem.status = status;
-      if (!mem.auditHistory) mem.auditHistory = [];
-      mem.auditHistory.unshift({
-        fromStatus: prev,
-        toStatus: status,
-        changedBy: 'Delivery Agent',
-        changedById: agentId,
-        changedAt: new Date().toISOString(),
-        reason: `Status updated to ${status}`,
-        remarks: ''
+    const idempotencyKey = getIdempotencyKey(req, req.user.id, 'agent-payout');
+    if (!idempotencyKey) {
+      return res.status(400).json({ success: false, message: 'A valid Idempotency-Key header is required.' });
+    }
+    const requestHash = hashPayload({ amount });
+    const previousRequest = await Transaction.findOne({ idempotencyKey });
+    if (previousRequest) {
+      if (previousRequest.requestHash !== requestHash || previousRequest.agentId !== req.user.id) {
+        return res.status(409).json({ success: false, message: 'This request key was already used for a different withdrawal.' });
+      }
+      const currentAgent = await User.findById(req.user.id).select('balance').lean();
+      return res.json({
+        success: true,
+        message: 'Payout request was already processed.',
+        remainingBalance: currentAgent?.balance || 0,
+        transaction: { ...previousRequest.toObject(), id: previousRequest._id.toString() }
       });
     }
-
-    const log = milkLogs.find(l => l.id === taskId || l.batchId === taskId);
-    if (log) {
-      log.status = status;
+    const transactionRef = `AGENT-WITHDRAW-${idempotencyKey}`;
+    const result = await withMongoTransaction(async session => {
+      const agent = await User.findOneAndUpdate(
+        { _id: req.user.id, role: { $in: ['agent', 'delivery_agent'] }, balance: { $gte: amount } },
+        { $inc: { balance: -amount } },
+        { returnDocument: 'after', session }
+      );
+      if (!agent) return null;
+      const [transaction] = await Transaction.create([{
+        agentId: req.user.id,
+        amount,
+        type: 'Bank Withdrawal',
+        status: 'Processing',
+        reference: transactionRef,
+        idempotencyKey,
+        requestHash
+      }], { session, ordered: true });
+      await createNotification({
+        userId: req.user.id,
+        role: 'delivery_agent',
+        title: 'Agent payout requested',
+        message: `Withdrawal of ₹${amount.toFixed(2)} requested to your bank account.`,
+        type: 'info',
+        session
+      });
+      return { agent, transaction };
+    });
+    if (!result) {
+      const existing = await User.findById(req.user.id).select('balance').lean();
+      if (!existing) return res.status(404).json({ success: false, message: 'Delivery agent account not found.' });
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient balance. Available: ₹${(existing.balance || 0).toFixed(2)}, Requested: ₹${amount.toFixed(2)}`
+      });
     }
-
-    return res.json({ success: true, message: `Farmer pickup status updated to ${status}`, batch: batchDoc || mem });
-  } else {
-    const task = deliveryTasks.find(t => t.id === taskId);
-    if (task) {
-      task.status = status;
-      
-      const agent = users.find(u => u.id === agentId || u.role === 'agent' || u.role === 'delivery_agent');
-      if (agent && status === 'Delivered') {
-        agent.balance = (agent.balance || 0) + 50;
-        agent.totalDeliveries = (agent.totalDeliveries || 0) + 1;
-        transactions.unshift({
-          id: `tx_${Date.now()}`,
-          agentId: agent.id,
-          amount: 50,
-          type: 'Credit (Doorstep Delivery Fee)',
-          date: new Date().toLocaleDateString(),
-          status: 'Completed',
-          reference: `DEL-${Math.floor(1000 + Math.random() * 9000)}`
+    const { agent, transaction } = result;
+    return res.json({
+      success: true,
+      message: `Payout request of ₹${amount.toFixed(2)} initiated successfully!`,
+      remainingBalance: agent.balance,
+      transaction
+    });
+  } catch (error) {
+    if (error.code === 11000) {
+      const idempotencyKey = getIdempotencyKey(req, req.user.id, 'agent-payout');
+      const requestHash = hashPayload({ amount: Number(req.body.amount) });
+      const duplicate = await Transaction.findOne({ idempotencyKey });
+      if (duplicate?.requestHash === requestHash && duplicate.agentId === req.user.id) {
+        const currentAgent = await User.findById(req.user.id).select('balance').lean();
+        return res.json({
+          success: true,
+          message: 'Payout request was already processed.',
+          remainingBalance: currentAgent?.balance || 0,
+          transaction: { ...duplicate.toObject(), id: duplicate._id.toString() }
         });
       }
-
-      return res.json({ success: true, message: `Consumer delivery status updated to ${status}`, task });
     }
+    return respondToDatabaseWriteError(res, error, 'Unable to request agent payout.');
   }
+});
 
-  return res.status(404).json({ success: false, message: 'Task not found.' });
+router.post('/update-status', async (req, res) => {
+  try {
+    const { taskId, status, type } = req.body;
+    if (type === 'farmer_pickup') {
+      const previousStatus = status === 'In Transit' ? 'Accepted' : status === 'Delivered' ? 'In Transit' : '';
+      if (!previousStatus) {
+        return res.status(400).json({ success: false, message: 'Pickup status must follow quality acceptance before transit and delivery.' });
+      }
+      const batch = await MilkBatch.findOne({ batchId: taskId });
+      if (!batch) return res.status(404).json({ success: false, message: 'Pickup not found.' });
+      if (batch.agentId && batch.agentId !== req.user.id) {
+        return res.status(403).json({ success: false, message: 'This pickup is assigned to another agent.' });
+      }
+      const updatedBatch = await MilkBatch.findOneAndUpdate({
+        batchId: taskId,
+        status: previousStatus,
+        agentId: req.user.id
+      }, {
+        $set: { status, agentName: req.user.name },
+        $push: {
+          auditHistory: {
+            fromStatus: previousStatus,
+            toStatus: status,
+            changedBy: req.user.name,
+            changedById: req.user.id,
+            reason: `Status updated to ${status}`
+          }
+        }
+      }, { returnDocument: 'after' });
+      if (!updatedBatch) return res.status(409).json({ success: false, message: 'Pickup is not in the required status for this transition.' });
+      return res.json({ success: true, message: `Pickup status updated to ${status}`, batch: updatedBatch });
+    }
+
+    if (type !== 'consumer_delivery') {
+      return res.status(400).json({ success: false, message: 'Invalid delivery task type.' });
+    }
+    const allowed = ['Out for Delivery', 'Delivered'];
+    if (!allowed.includes(status)) return res.status(400).json({ success: false, message: 'Invalid delivery status.' });
+    const expectedStatus = status === 'Out for Delivery' ? 'Assigned' : 'Out for Delivery';
+    const deliverySelector = {
+      $or: [{ deliveryId: taskId }, { orderId: taskId }],
+      agentId: req.user.id
+    };
+    const result = await withMongoTransaction(async session => {
+      const delivery = await Delivery.findOneAndUpdate({
+        ...deliverySelector,
+        status: expectedStatus
+      }, {
+        $set: {
+          status,
+          ...(status === 'Delivered' ? { deliveredAt: new Date() } : {}),
+          ...(status === 'Delivered' ? { commissionPaid: true, commission: 50 } : {})
+        },
+        $push: {
+          tracking: { status, changedAt: new Date(), changedBy: req.user.id }
+        }
+      }, { returnDocument: 'after', session });
+      if (!delivery) return null;
+
+      if (delivery.orderId) {
+        const order = await Order.findOneAndUpdate(
+          { orderId: delivery.orderId, status: expectedStatus },
+          {
+            $set: { status },
+            $push: { tracking: { status, changedBy: req.user.id } }
+          },
+          { returnDocument: 'after', session }
+        );
+        if (!order) throw new Error(`Order ${delivery.orderId} is missing or out of sync with its delivery.`);
+      }
+
+      let agent = null;
+      if (status === 'Delivered') {
+        agent = await User.findByIdAndUpdate(
+          req.user.id,
+          { $inc: { balance: 50, totalDeliveries: 1 } },
+          { returnDocument: 'after', session }
+        );
+        if (!agent) throw new Error('The delivery agent account is unavailable.');
+        await Transaction.create([{
+          agentId: req.user.id,
+          amount: 50,
+          type: 'Credit (Doorstep Delivery Fee)',
+          status: 'Completed',
+          reference: `DELIVERY-FEE-${delivery.deliveryId}`
+        }], { session, ordered: true });
+      }
+      await createNotification({
+        userId: delivery.consumerId,
+        role: 'consumer',
+        title: `Delivery ${status}`,
+        message: `Your delivery ${delivery.deliveryId} is now ${status.toLowerCase()}.`,
+        type: status === 'Delivered' ? 'success' : 'info',
+        session
+      });
+      return { delivery, agent };
+    });
+    if (!result) {
+      const exists = await Delivery.exists(deliverySelector);
+      return exists
+        ? res.status(409).json({ success: false, message: 'Delivery status changed; refresh and try again.' })
+        : res.status(404).json({ success: false, message: 'Assigned delivery not found.' });
+    }
+    const { delivery } = result;
+    return res.json({
+      success: true,
+      message: `Consumer delivery status updated to ${status}`,
+      delivery,
+      ...(result.agent ? { agentBalance: result.agent.balance } : {})
+    });
+  } catch (error) {
+    return respondToDatabaseWriteError(res, error, 'Unable to update delivery status.');
+  }
 });
 
 module.exports = router;
