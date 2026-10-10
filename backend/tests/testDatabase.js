@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { connectDB } = require('../src/config/db');
 const User = require('../src/models/User');
 const OtpChallenge = require('../src/models/OtpChallenge');
+const EmailOtpChallenge = require('../src/models/EmailOtpChallenge');
 const MilkBatch = require('../src/models/MilkBatch');
 const Transaction = require('../src/models/Transaction');
 const Order = require('../src/models/Order');
@@ -40,6 +41,7 @@ async function prepareTestDatabase() {
   await Promise.all([
     User.deleteMany({}),
     OtpChallenge.deleteMany({}),
+    EmailOtpChallenge.deleteMany({}),
     MilkBatch.deleteMany({}),
     Transaction.deleteMany({}),
     Order.deleteMany({}),

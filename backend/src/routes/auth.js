@@ -4,8 +4,10 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
+const EmailOtpChallenge = require('../models/EmailOtpChallenge');
 const Subscription = require('../models/Subscription');
 const { JWT_SECRET, authLimiter, verifyToken } = require('../middleware/authMiddleware');
+const { sendVerificationEmail, maskEmail } = require('../services/emailService');
 
 // Helper: Password strength validator
 // Minimum 8 characters, at least one uppercase letter, one lowercase letter, and one number
@@ -25,9 +27,9 @@ const isValidEmail = (email) => {
   return emailRegex.test(email.trim().toLowerCase());
 };
 
-// Helper: Hash reset token with SHA-256 for secure database storage
-const hashResetToken = (token) => {
-  return crypto.createHash('sha256').update(token.toString()).digest('hex');
+// Helper: SHA-256 Hashing for OTP and Tokens
+const hashString = (str) => {
+  return crypto.createHash('sha256').update(str.toString()).digest('hex');
 };
 
 // Helper: Format user record into standardized frontend format
@@ -54,7 +56,7 @@ const formatUserObject = (u) => {
     phoneNumber: userObj.phoneNumber || userObj.phone || '',
     phone: userObj.phoneNumber || userObj.phone || '',
     countryCode: userObj.countryCode || '+91',
-    isEmailVerified: userObj.isEmailVerified !== undefined ? userObj.isEmailVerified : true,
+    isEmailVerified: userObj.isEmailVerified !== undefined ? userObj.isEmailVerified : false,
     isPhoneVerified: userObj.isPhoneVerified !== undefined ? userObj.isPhoneVerified : true,
     isActive: userObj.isActive !== undefined ? userObj.isActive : true,
     balance: userObj.balance !== undefined && userObj.balance !== null ? Number(userObj.balance) : 0,
@@ -79,7 +81,7 @@ const formatUserObject = (u) => {
 };
 
 // ==========================================
-// 1. POST /api/auth/register - Register with Email & Password
+// 1. POST /api/auth/register - Register Pending Account & Send Email OTP
 // ==========================================
 router.post('/register', authLimiter, async (req, res) => {
   try {
@@ -142,9 +144,9 @@ router.post('/register', authLimiter, async (req, res) => {
       });
     }
 
-    // Check for existing user with this email
+    // Check for existing verified user with this email
     const existingUser = await User.findOne({ email: cleanEmail });
-    if (existingUser) {
+    if (existingUser && existingUser.isEmailVerified) {
       return res.status(409).json({
         success: false,
         message: 'An account with this email address already exists. Please sign in.'
@@ -154,66 +156,79 @@ router.post('/register', authLimiter, async (req, res) => {
     // Hash password with bcrypt (10 salt rounds)
     const passwordHash = await bcrypt.hash(password, 10);
 
-    // Create new user record
-    const newUser = new User({
-      email: cleanEmail,
-      passwordHash,
-      name: displayName,
-      role: selectedRole,
-      phoneNumber: (phoneNumber || '').trim(),
-      farmName: farmName ? farmName.trim() : (selectedRole === 'farmer' ? `${displayName}'s Dairy Farm` : ''),
-      address: address ? address.trim() : (selectedRole === 'consumer' ? '123 Green Valley, Sector 14' : ''),
-      vehicleNo: vehicleNo ? vehicleNo.trim() : (selectedRole === 'delivery_agent' ? 'GJ-07-MK-4421' : ''),
-      assignedArea: assignedArea ? assignedArea.trim() : (selectedRole === 'delivery_agent' ? 'Sector 14 & Green Valley' : ''),
-      isActive: true,
-      isEmailVerified: true,
-      lastLoginAt: new Date()
-    });
-
-    await newUser.save();
-
-    // If consumer, initialize default 30-day active subscription
-    if (selectedRole === 'consumer') {
-      try {
-        const subscriptionStart = new Date();
-        const defaultDays = 30;
-        await Subscription.create({
-          subscriptionId: `SUB-${crypto.randomUUID()}`,
-          consumerId: newUser._id.toString(),
-          planName: 'Pure Fresh A2 Cow Milk',
-          planType: 'Daily',
-          dailyLiters: 2,
-          totalDays: defaultDays,
-          daysRemaining: defaultDays,
-          status: 'Active',
-          schedule: 'Daily',
-          pricePerLiter: 65,
-          totalAmountPaid: 3900,
-          deliveryTimeSlot: '6:30 AM - 7:30 AM',
-          deliveryAddress: newUser.address,
-          startDate: subscriptionStart,
-          endDate: new Date(subscriptionStart.getTime() + defaultDays * 86400000)
-        });
-      } catch (subErr) {
-        console.warn('Subscription auto-create note:', subErr.message);
-      }
+    let userDoc;
+    if (existingUser && !existingUser.isEmailVerified) {
+      // Update pending unverified account
+      existingUser.passwordHash = passwordHash;
+      existingUser.name = displayName;
+      existingUser.role = selectedRole;
+      existingUser.phoneNumber = (phoneNumber || '').trim();
+      if (farmName) existingUser.farmName = farmName.trim();
+      if (address) existingUser.address = address.trim();
+      if (vehicleNo) existingUser.vehicleNo = vehicleNo.trim();
+      if (assignedArea) existingUser.assignedArea = assignedArea.trim();
+      await existingUser.save();
+      userDoc = existingUser;
+    } else {
+      // Create new pending unverified user record
+      userDoc = new User({
+        email: cleanEmail,
+        passwordHash,
+        name: displayName,
+        role: selectedRole,
+        phoneNumber: (phoneNumber || '').trim(),
+        farmName: farmName ? farmName.trim() : (selectedRole === 'farmer' ? `${displayName}'s Dairy Farm` : ''),
+        address: address ? address.trim() : (selectedRole === 'consumer' ? '123 Green Valley, Sector 14' : ''),
+        vehicleNo: vehicleNo ? vehicleNo.trim() : (selectedRole === 'delivery_agent' ? 'GJ-07-MK-4421' : ''),
+        assignedArea: assignedArea ? assignedArea.trim() : (selectedRole === 'delivery_agent' ? 'Sector 14 & Green Valley' : ''),
+        isEmailVerified: false,
+        isActive: true
+      });
+      await userDoc.save();
     }
 
-    // Issue JWT Access Token
-    const payload = {
-      id: newUser._id.toString(),
-      email: newUser.email,
-      role: newUser.role
-    };
+    // Generate Cryptographically Secure 6-Digit Email OTP
+    const rawOtp = crypto.randomInt(100000, 1000000).toString();
+    const hashedOtp = hashString(rawOtp);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    const resendCooldownEnd = new Date(Date.now() + 60 * 1000); // 60 seconds
 
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
-    const formattedUser = formatUserObject(newUser);
+    // Save Email OTP Challenge
+    await EmailOtpChallenge.findOneAndUpdate(
+      { email: cleanEmail, purpose: 'email_verification' },
+      {
+        $set: {
+          email: cleanEmail,
+          userId: userDoc._id,
+          hashedOtp,
+          purpose: 'email_verification',
+          expiresAt,
+          resendCooldownEnd,
+          attempts: 0,
+          verified: false
+        }
+      },
+      { upsert: true, runValidators: true }
+    );
+
+    // Send Verification Email
+    const emailResult = await sendVerificationEmail({
+      toEmail: cleanEmail,
+      otp: rawOtp,
+      name: displayName
+    });
+
+    const displayMaskedEmail = maskEmail(cleanEmail);
 
     return res.status(201).json({
       success: true,
-      message: `Welcome to HealthyMilk, ${displayName}! Your account is ready.`,
-      user: formattedUser,
-      token
+      requiresEmailVerification: true,
+      message: `We sent a 6-digit verification code to ${displayMaskedEmail}. Please verify your email to continue.`,
+      email: cleanEmail,
+      maskedEmail: displayMaskedEmail,
+      expiresSeconds: 300,
+      resendCooldownSeconds: 60,
+      emailDelivery: emailResult.providerStatus
     });
 
   } catch (err) {
@@ -232,7 +247,258 @@ router.post('/register', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 2. POST /api/auth/login - Email & Password Sign In
+// 2. POST /api/auth/verify-email - Verify Email OTP & Activate Session
+// ==========================================
+router.post('/verify-email', authLimiter, async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+
+    if (!email || !isValidEmail(email) || !/^\d{6}$/.test(String(otp || ''))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide your email address and the 6-digit verification code.'
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    const challenge = await EmailOtpChallenge.findOne({
+      email: cleanEmail,
+      purpose: 'email_verification'
+    }).select('+hashedOtp');
+
+    if (!challenge) {
+      return res.status(400).json({
+        success: false,
+        message: 'No active verification code found for this email. Please request a new code.'
+      });
+    }
+
+    // Check expiration (5 minutes)
+    if (Date.now() > challenge.expiresAt.getTime()) {
+      await EmailOtpChallenge.deleteOne({ _id: challenge._id });
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code has expired. Please request a new one.'
+      });
+    }
+
+    // Check max attempts (5)
+    if (challenge.attempts >= 5) {
+      await EmailOtpChallenge.deleteOne({ _id: challenge._id });
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum verification attempts exceeded. Please request a new verification code.'
+      });
+    }
+
+    // Compare SHA-256 hash using timing-safe comparison
+    const candidateHash = Buffer.from(hashString(otp));
+    const storedHash = Buffer.from(challenge.hashedOtp);
+    const isMatch = candidateHash.length === storedHash.length &&
+      crypto.timingSafeEqual(candidateHash, storedHash);
+
+    if (!isMatch) {
+      const updated = await EmailOtpChallenge.findOneAndUpdate(
+        { _id: challenge._id, attempts: { $lt: 5 } },
+        { $inc: { attempts: 1 } },
+        { returnDocument: 'after' }
+      );
+      if (!updated || updated.attempts >= 5) {
+        await EmailOtpChallenge.deleteOne({ _id: challenge._id });
+        return res.status(400).json({
+          success: false,
+          message: 'Maximum verification attempts exceeded. Please request a new code.'
+        });
+      }
+      const remaining = 5 - updated.attempts;
+      return res.status(400).json({
+        success: false,
+        message: `Invalid verification code. Please try again. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining)`
+      });
+    }
+
+    // Atomic claim of challenge
+    const verifiedChallenge = await EmailOtpChallenge.findOneAndDelete({
+      _id: challenge._id,
+      expiresAt: { $gt: new Date() }
+    });
+
+    if (!verifiedChallenge) {
+      return res.status(400).json({
+        success: false,
+        message: 'This verification code was already used or has expired.'
+      });
+    }
+
+    // Mark user as email verified and active
+    const user = await User.findById(challenge.userId || challenge._id);
+    const targetUser = user || await User.findOne({ email: cleanEmail });
+
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        message: 'User account not found.'
+      });
+    }
+
+    targetUser.isEmailVerified = true;
+    targetUser.isActive = true;
+    targetUser.lastLoginAt = new Date();
+    await targetUser.save();
+
+    // Auto-create initial 30-day subscription for consumer
+    if (targetUser.role === 'consumer') {
+      try {
+        const existingSub = await Subscription.findOne({ consumerId: targetUser._id.toString() });
+        if (!existingSub) {
+          const subscriptionStart = new Date();
+          const defaultDays = 30;
+          await Subscription.create({
+            subscriptionId: `SUB-${crypto.randomUUID()}`,
+            consumerId: targetUser._id.toString(),
+            planName: 'Pure Fresh A2 Cow Milk',
+            planType: 'Daily',
+            dailyLiters: 2,
+            totalDays: defaultDays,
+            daysRemaining: defaultDays,
+            status: 'Active',
+            schedule: 'Daily',
+            pricePerLiter: 65,
+            totalAmountPaid: 3900,
+            deliveryTimeSlot: '6:30 AM - 7:30 AM',
+            deliveryAddress: targetUser.address || '123 Green Valley, Sector 14',
+            startDate: subscriptionStart,
+            endDate: new Date(subscriptionStart.getTime() + defaultDays * 86400000)
+          });
+        }
+      } catch (subErr) {
+        console.warn('Consumer subscription auto-init note:', subErr.message);
+      }
+    }
+
+    // Issue JWT Access Token
+    const payload = {
+      id: targetUser._id.toString(),
+      email: targetUser.email,
+      role: targetUser.role === 'agent' ? 'delivery_agent' : targetUser.role
+    };
+
+    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' });
+    const formattedUser = formatUserObject(targetUser);
+
+    return res.status(200).json({
+      success: true,
+      message: `Email verified successfully! Welcome to HealthyMilk, ${formattedUser.name}.`,
+      user: formattedUser,
+      token
+    });
+
+  } catch (err) {
+    console.error('Verify Email Error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error verifying email. Please try again.'
+    });
+  }
+});
+
+// ==========================================
+// 3. POST /api/auth/resend-verification - Resend Email OTP
+// ==========================================
+router.post('/resend-verification', authLimiter, async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide a valid email address.'
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const user = await User.findOne({ email: cleanEmail });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: 'No account found with this email address.'
+      });
+    }
+
+    if (user.isEmailVerified) {
+      return res.status(400).json({
+        success: false,
+        message: 'This account email is already verified. Please sign in.'
+      });
+    }
+
+    const currentChallenge = await EmailOtpChallenge.findOne({
+      email: cleanEmail,
+      purpose: 'email_verification'
+    });
+
+    // Enforce 60-second resend cooldown
+    if (currentChallenge && currentChallenge.resendCooldownEnd > new Date()) {
+      const waitSeconds = Math.ceil((currentChallenge.resendCooldownEnd.getTime() - Date.now()) / 1000);
+      return res.status(429).json({
+        success: false,
+        message: `Please wait ${waitSeconds} seconds before requesting another verification code.`
+      });
+    }
+
+    // Generate new random OTP
+    const rawOtp = crypto.randomInt(100000, 1000000).toString();
+    const hashedOtp = hashString(rawOtp);
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+    const resendCooldownEnd = new Date(Date.now() + 60 * 1000);
+
+    await EmailOtpChallenge.findOneAndUpdate(
+      { email: cleanEmail, purpose: 'email_verification' },
+      {
+        $set: {
+          email: cleanEmail,
+          userId: user._id,
+          hashedOtp,
+          purpose: 'email_verification',
+          expiresAt,
+          resendCooldownEnd,
+          attempts: 0,
+          verified: false
+        }
+      },
+      { upsert: true, runValidators: true }
+    );
+
+    const emailResult = await sendVerificationEmail({
+      toEmail: cleanEmail,
+      otp: rawOtp,
+      name: user.name
+    });
+
+    const displayMasked = maskEmail(cleanEmail);
+
+    return res.status(200).json({
+      success: true,
+      message: `A new verification code has been sent to ${displayMasked}.`,
+      maskedEmail: displayMasked,
+      expiresSeconds: 300,
+      resendCooldownSeconds: 60,
+      emailDelivery: emailResult.providerStatus
+    });
+
+  } catch (err) {
+    console.error('Resend Verification Error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Server error sending verification code. Please try again.'
+    });
+  }
+});
+
+// ==========================================
+// 4. POST /api/auth/login - Email & Password Sign In
 // ==========================================
 router.post('/login', authLimiter, async (req, res) => {
   try {
@@ -263,6 +529,17 @@ router.post('/login', authLimiter, async (req, res) => {
       return res.status(401).json({
         success: false,
         message: 'Invalid email or password.'
+      });
+    }
+
+    // Check if account email is verified
+    if (user.isEmailVerified === false) {
+      return res.status(403).json({
+        success: false,
+        unverified: true,
+        email: user.email,
+        maskedEmail: maskEmail(user.email),
+        message: 'Your email address is not verified yet. Please enter the verification code sent to your email.'
       });
     }
 
@@ -305,7 +582,7 @@ router.post('/login', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 3. POST /api/auth/forgot-password - Secure Password Reset Request
+// 5. POST /api/auth/forgot-password - Secure Password Reset Request
 // ==========================================
 router.post('/forgot-password', authLimiter, async (req, res) => {
   try {
@@ -333,16 +610,16 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 
     // Generate secure random reset token
     const rawResetToken = crypto.randomBytes(32).toString('hex');
-    const hashedToken = hashResetToken(rawResetToken);
+    const hashedToken = hashString(rawResetToken);
 
     // Save hashed token and expiry (1 hour)
     user.resetPasswordToken = hashedToken;
-    user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    user.resetPasswordExpires = new Date(Date.now() + 60 * 60 * 1000);
     await user.save();
 
     return res.status(200).json({
       ...genericResponse,
-      resetToken: rawResetToken // Returned for direct in-app reset confirmation
+      resetToken: rawResetToken
     });
 
   } catch (err) {
@@ -355,7 +632,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 4. POST /api/auth/reset-password - Reset Password with Token
+// 6. POST /api/auth/reset-password - Reset Password with Token
 // ==========================================
 router.post('/reset-password', authLimiter, async (req, res) => {
   try {
@@ -377,7 +654,7 @@ router.post('/reset-password', authLimiter, async (req, res) => {
       });
     }
 
-    const hashedToken = hashResetToken(suppliedToken);
+    const hashedToken = hashString(suppliedToken);
 
     const user = await User.findOne({
       resetPasswordToken: hashedToken,
@@ -412,7 +689,7 @@ router.post('/reset-password', authLimiter, async (req, res) => {
 });
 
 // ==========================================
-// 5. GET /api/auth/me - Authenticated User Session Profile
+// 7. GET /api/auth/me - Authenticated User Session Profile
 // ==========================================
 router.get('/me', verifyToken, async (req, res) => {
   try {
@@ -430,7 +707,7 @@ router.get('/me', verifyToken, async (req, res) => {
 });
 
 // ==========================================
-// 6. POST /api/auth/logout - Session Termination
+// 8. POST /api/auth/logout - Session Termination
 // ==========================================
 router.post('/logout', (req, res) => {
   return res.status(200).json({

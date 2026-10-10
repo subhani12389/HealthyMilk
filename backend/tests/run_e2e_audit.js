@@ -5,12 +5,14 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../src/models/User');
 const OtpChallenge = require('../src/models/OtpChallenge');
+const EmailOtpChallenge = require('../src/models/EmailOtpChallenge');
 const MilkBatch = require('../src/models/MilkBatch');
 const Transaction = require('../src/models/Transaction');
 const Order = require('../src/models/Order');
 const Subscription = require('../src/models/Subscription');
 const Delivery = require('../src/models/Delivery');
 const Notification = require('../src/models/Notification');
+const { testDeliveredEmails } = require('../src/services/emailService');
 const { prepareTestDatabase } = require('./testDatabase');
 const { getPagination } = require('../src/utils/pagination');
 
@@ -123,6 +125,7 @@ async function runAudit() {
   process.env.SMS_API_KEY = 'audit-test-key';
   process.env.ALLOW_STANDALONE_TRANSACTIONS = 'true';
   process.env.NODE_ENV = 'production';
+  process.env.MOCK_EMAIL = 'true';
   process.env.CORS_ORIGINS = 'http://localhost:3000';
   smsServer = http.createServer((req, res) => {
     const requestUrl = new URL(req.url, 'http://localhost');
@@ -258,7 +261,7 @@ async function runAudit() {
     });
     assert('Reject admin self-registration (HTTP 400)', adminSelfReg.status === 400);
 
-    // 2.2 Register Farmer Account
+    // 2.2 Register Farmer Account (Pending Email Verification)
     const farmerEmail = 'farmer@healthymilk.test';
     const farmerPassword = 'DairyFarmer@2026';
     const createFarmer = await request('POST', '/api/auth/register', {
@@ -268,28 +271,73 @@ async function runAudit() {
       role: 'farmer',
       farmName: 'Green Valley Organic Dairy'
     });
-    assert('Register new Farmer account with email and password (HTTP 201)',
-      createFarmer.status === 201 && createFarmer.data.success);
-    assert('Farmer account role is set correctly', createFarmer.data.user.role === 'farmer');
-    assert('JWT access token is returned upon registration', Boolean(createFarmer.data.token));
-    assert('Password hash and reset tokens are excluded from auth JSON response',
-      !createFarmer.data.user.passwordHash && !createFarmer.data.user.resetPasswordToken);
-    assert('Farmer account persists in MongoDB', Boolean(await User.findById(createFarmer.data.user.id)));
+    assert('Register new Farmer account initiates Email OTP verification (HTTP 201)',
+      createFarmer.status === 201 && createFarmer.data.requiresEmailVerification && createFarmer.data.maskedEmail);
+    assert('Registration response masks user email appropriately',
+      Boolean(createFarmer.data?.maskedEmail?.includes('***@')));
 
-    const farmerToken = createFarmer.data.token;
-    const farmerId = createFarmer.data.user.id;
+    const unverifiedFarmerDoc = await User.findOne({ email: farmerEmail });
+    assert('Farmer account is saved in MongoDB with isEmailVerified = false',
+      Boolean(unverifiedFarmerDoc) && unverifiedFarmerDoc.isEmailVerified === false);
+
+    // 2.3 Unverified Account Login Protection
+    const unverifiedLogin = await request('POST', '/api/auth/login', {
+      email: farmerEmail,
+      password: farmerPassword
+    });
+    assert('Block unverified account login with HTTP 403 and unverified flag',
+      unverifiedLogin.status === 403 && unverifiedLogin.data.unverified === true);
+
+    // 2.4 Email OTP Verification Edge Cases & Completion
+    const invalidOtpFormat = await request('POST', '/api/auth/verify-email', {
+      email: farmerEmail,
+      otp: '12'
+    });
+    assert('Reject malformed OTP input during email verification (HTTP 400)', invalidOtpFormat.status === 400);
+
+    const wrongOtpVerify = await request('POST', '/api/auth/verify-email', {
+      email: farmerEmail,
+      otp: '000000'
+    });
+    assert('Reject incorrect 6-digit OTP during email verification (HTTP 400)', wrongOtpVerify.status === 400);
+
+    const cooldownResend = await request('POST', '/api/auth/resend-verification', {
+      email: farmerEmail
+    });
+    assert('Enforce 60-second cooldown on OTP resend requests (HTTP 429)', cooldownResend.status === 429);
+
+    const farmerOtpData = testDeliveredEmails.get(farmerEmail.toLowerCase());
+    assert('Email delivery service queued 6-digit OTP for farmer', Boolean(farmerOtpData?.otp));
+
+    const farmerVerify = await request('POST', '/api/auth/verify-email', {
+      email: farmerEmail,
+      otp: farmerOtpData.otp
+    });
+    assert('Verify email with valid 6-digit OTP activates account and issues JWT (HTTP 200)',
+      farmerVerify.status === 200 && farmerVerify.data.success && Boolean(farmerVerify.data.token));
+    assert('Verified farmer user object contains proper role',
+      farmerVerify.data.user?.role === 'farmer' && farmerVerify.data.user?.isEmailVerified === true);
+
+    const farmerToken = farmerVerify.data.token;
+    const farmerId = farmerVerify.data.user.id;
     authToken = farmerToken;
 
-    // 2.3 Duplicate Email Registration
+    const replayVerify = await request('POST', '/api/auth/verify-email', {
+      email: farmerEmail,
+      otp: farmerOtpData.otp
+    });
+    assert('Prevent OTP replay attack: already claimed OTP is rejected (HTTP 400)', replayVerify.status === 400);
+
+    // 2.5 Duplicate Email Registration
     const duplicateEmailReg = await request('POST', '/api/auth/register', {
       email: farmerEmail,
       password: 'AnotherPassword123',
       fullName: 'Duplicate User',
       role: 'consumer'
     });
-    assert('Reject duplicate email registration with friendly 409 Conflict', duplicateEmailReg.status === 409);
+    assert('Reject duplicate email registration for verified account with 409 Conflict', duplicateEmailReg.status === 409);
 
-    // 2.4 Register Delivery Agent & Consumer Accounts
+    // 2.6 Register & Verify Delivery Agent Account
     const agentEmail = 'agent@healthymilk.test';
     const agentPassword = 'AgentSecure@2026';
     const createAgent = await request('POST', '/api/auth/register', {
@@ -300,11 +348,18 @@ async function runAudit() {
       vehicleNo: 'GJ-07-MK-4421',
       assignedArea: 'Sector 14 & Green Valley'
     });
-    assert('Register Delivery Agent account (HTTP 201)',
-      createAgent.status === 201 && createAgent.data.user.role === 'delivery_agent');
-    const agentToken = createAgent.data.token;
-    const agentId = createAgent.data.user.id;
+    assert('Register Delivery Agent account initiates verification (HTTP 201)', createAgent.status === 201);
+    const agentOtpData = testDeliveredEmails.get(agentEmail.toLowerCase());
+    const agentVerify = await request('POST', '/api/auth/verify-email', {
+      email: agentEmail,
+      otp: agentOtpData.otp
+    });
+    assert('Verify Delivery Agent email successfully (HTTP 200)',
+      agentVerify.status === 200 && agentVerify.data.user.role === 'delivery_agent');
+    const agentToken = agentVerify.data.token;
+    const agentId = agentVerify.data.user.id;
 
+    // 2.7 Register & Verify Consumer Account
     const consumerEmail = 'consumer@healthymilk.test';
     const consumerPassword = 'ConsumerMilk@2026';
     const createConsumer = await request('POST', '/api/auth/register', {
@@ -313,19 +368,25 @@ async function runAudit() {
       fullName: 'Ananya Sharma',
       role: 'consumer'
     });
-    assert('Register Consumer account (HTTP 201)',
-      createConsumer.status === 201 && createConsumer.data.user.role === 'consumer');
-    const consumerToken = createConsumer.data.token;
-    const consumerId = createConsumer.data.user.id;
-    assert('New consumer has a persisted initial 30-day active subscription',
+    assert('Register Consumer account initiates verification (HTTP 201)', createConsumer.status === 201);
+    const consumerOtpData = testDeliveredEmails.get(consumerEmail.toLowerCase());
+    const consumerVerify = await request('POST', '/api/auth/verify-email', {
+      email: consumerEmail,
+      otp: consumerOtpData.otp
+    });
+    assert('Verify Consumer email successfully (HTTP 200)',
+      consumerVerify.status === 200 && consumerVerify.data.user.role === 'consumer');
+    const consumerToken = consumerVerify.data.token;
+    const consumerId = consumerVerify.data.user.id;
+    assert('New verified consumer has a persisted initial 30-day active subscription',
       Boolean(await Subscription.findOne({ consumerId, status: 'Active' })));
 
-    // 2.5 Login Flow & Credential Validation
+    // 2.8 Login Flow & Credential Validation
     const farmerLogin = await request('POST', '/api/auth/login', {
       email: farmerEmail,
       password: farmerPassword
     });
-    assert('Login succeeds with valid email and password (HTTP 200)',
+    assert('Login succeeds for verified email and password (HTTP 200)',
       farmerLogin.status === 200 && farmerLogin.data.success && Boolean(farmerLogin.data.token));
 
     const wrongPasswordLogin = await request('POST', '/api/auth/login', {
@@ -340,7 +401,7 @@ async function runAudit() {
     });
     assert('Reject login with non-existent email (HTTP 401)', nonExistentLogin.status === 401);
 
-    // 2.6 JWT Session Profile Verification (/api/auth/me)
+    // 2.9 JWT Session Profile Verification (/api/auth/me)
     const meRes = await request('GET', '/api/auth/me', null, { Authorization: `Bearer ${farmerToken}` });
     assert('Fetch authenticated user profile with JWT (/api/auth/me)',
       meRes.status === 200 && meRes.data.user.id === farmerId && meRes.data.user.email === farmerEmail);
@@ -348,7 +409,7 @@ async function runAudit() {
     const meUnauthorized = await request('GET', '/api/auth/me', null, { Authorization: '' });
     assert('Block /api/auth/me without JWT token (HTTP 401)', meUnauthorized.status === 401);
 
-    // 2.7 Password Reset & Single-Use Token Workflow
+    // 2.10 Password Reset & Single-Use Token Workflow
     const nonExistentForgot = await request('POST', '/api/auth/forgot-password', {
       email: 'unregistered@healthymilk.test'
     });
@@ -400,7 +461,7 @@ async function runAudit() {
     assert('Login succeeds with newly reset password (HTTP 200)',
       newPassLogin.status === 200 && Boolean(newPassLogin.data.token));
 
-    // 2.8 Logout Endpoint
+    // 2.11 Logout Endpoint
     const logoutRes = await request('POST', '/api/auth/logout');
     assert('Logout endpoint terminates session successfully (HTTP 200)', logoutRes.status === 200);
 

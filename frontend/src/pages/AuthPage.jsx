@@ -1,34 +1,64 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { apiFetch } from '../utils/api';
 import { 
   Milk, ArrowRight, ShieldCheck, CheckCircle2, 
   AlertCircle, ArrowLeft, Lock, Mail, User, 
-  Eye, EyeOff, KeyRound, Loader2, Sparkles, Check, X
+  Eye, EyeOff, KeyRound, Loader2, RotateCcw
 } from 'lucide-react';
 
 export default function AuthPage() {
   const { loginUser } = useAuth();
   const { showToast } = useToast();
   
-  // Auth Modes: 'signin' | 'register' | 'forgot' | 'reset'
+  // Auth Modes: 'signin' | 'register' | 'verify_email' | 'forgot' | 'reset'
   const [mode, setMode] = useState('signin');
 
-  // Form Fields
+  // Registration & Sign In Form State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
-  const [selectedRole, setSelectedRole] = useState('consumer');
+  const [selectedRole, setSelectedRole] = useState('farmer');
+
+  // OTP Verification State
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
+  const [resendTimer, setResendTimer] = useState(0);
+  const otpInputRefs = [useRef(null), useRef(null), useRef(null), useRef(null), useRef(null), useRef(null)];
+
+  // Password Reset State
   const [resetToken, setResetToken] = useState('');
 
-  // UI States
+  // UI State
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
+  // Countdown timer for Resend OTP
+  useEffect(() => {
+    let interval = null;
+    if (resendTimer > 0) {
+      interval = setInterval(() => {
+        setResendTimer(prev => prev - 1);
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [resendTimer]);
+
+  // Focus first OTP box when entering verify_email mode
+  useEffect(() => {
+    if (mode === 'verify_email') {
+      setTimeout(() => {
+        otpInputRefs[0]?.current?.focus();
+      }, 100);
+    }
+  }, [mode]);
 
   // Password Strength Calculation
   const passwordStrength = useMemo(() => {
@@ -95,6 +125,12 @@ export default function AuthPage() {
       if (data && data.success && data.user && data.token) {
         showToast(data.message || `Welcome back, ${data.user.name}!`, 'success');
         loginUser(data.user, data.token);
+      } else if (data && data.unverified) {
+        // Account exists but email is not verified -> prompt OTP verification
+        setMaskedEmail(data.maskedEmail || email.trim());
+        setResendTimer(60);
+        showToast('Please verify your email address to continue.', 'warning');
+        setMode('verify_email');
       } else {
         const msg = data?.message || 'Invalid email or password. Please try again.';
         setErrorMsg(msg);
@@ -108,7 +144,7 @@ export default function AuthPage() {
     }
   };
 
-  // 2. Register Handler
+  // 2. Register Handler -> Sends Email OTP
   const handleRegister = async (e) => {
     if (e) e.preventDefault();
     if (loading) return;
@@ -139,19 +175,24 @@ export default function AuthPage() {
     setLoading(true);
 
     try {
+      const cleanEmail = email.trim().toLowerCase();
       const data = await apiFetch('/api/auth/register', {
         method: 'POST',
         body: JSON.stringify({
-          name: fullName.trim(),
-          email: email.trim().toLowerCase(),
+          fullName: fullName.trim(),
+          email: cleanEmail,
           password,
           role: selectedRole
         })
       });
 
-      if (data && data.success && data.user && data.token) {
-        showToast(`Account created successfully! Welcome to HealthyMilk.`, 'success');
-        loginUser(data.user, data.token);
+      if (data && data.success) {
+        setMaskedEmail(data.maskedEmail || cleanEmail);
+        setResendTimer(data.resendCooldownSeconds || 60);
+        setOtpDigits(['', '', '', '', '', '']);
+        setSuccessMsg(data.message || `We sent a verification code to ${data.maskedEmail || cleanEmail}`);
+        showToast('Verification code sent to your email!', 'success');
+        setMode('verify_email');
       } else {
         const msg = data?.message || 'Registration failed. Please check your details.';
         setErrorMsg(msg);
@@ -165,7 +206,117 @@ export default function AuthPage() {
     }
   };
 
-  // 3. Forgot Password Handler
+  // 3. Segmented OTP Handlers
+  const handleOtpBoxChange = (index, value) => {
+    const cleanDigit = value.replace(/[^\d]/g, '').slice(-1);
+    const newDigits = [...otpDigits];
+    newDigits[index] = cleanDigit;
+    setOtpDigits(newDigits);
+    if (errorMsg) setErrorMsg('');
+
+    // Auto-advance focus to next input box
+    if (cleanDigit && index < 5 && otpInputRefs[index + 1]?.current) {
+      otpInputRefs[index + 1].current.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0 && otpInputRefs[index - 1]?.current) {
+      otpInputRefs[index - 1].current.focus();
+    }
+  };
+
+  const handleOtpPaste = (e) => {
+    e.preventDefault();
+    const pastedData = e.clipboardData.getData('text').replace(/[^\d]/g, '').slice(0, 6);
+    if (pastedData.length > 0) {
+      const digits = pastedData.split('');
+      const newDigits = ['', '', '', '', '', ''];
+      digits.forEach((d, idx) => { if (idx < 6) newDigits[idx] = d; });
+      setOtpDigits(newDigits);
+      
+      const nextFocusIdx = Math.min(pastedData.length, 5);
+      if (otpInputRefs[nextFocusIdx]?.current) {
+        otpInputRefs[nextFocusIdx].current.focus();
+      }
+    }
+  };
+
+  // 4. Verify Email OTP Handler
+  const handleVerifyEmail = async (e) => {
+    if (e) e.preventDefault();
+    if (loading) return;
+
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    const enteredOtp = otpDigits.join('');
+    if (enteredOtp.length !== 6) {
+      setErrorMsg('Please enter the full 6-digit verification code.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/api/auth/verify-email', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          otp: enteredOtp
+        })
+      });
+
+      if (data && data.success && data.user && data.token) {
+        showToast(data.message || 'Email verified successfully! Welcome to HealthyMilk.', 'success');
+        loginUser(data.user, data.token);
+      } else {
+        const msg = data?.message || 'Invalid or expired verification code.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error verifying email.');
+      showToast('Error verifying code.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 5. Resend Verification Code Handler
+  const handleResendOtp = async () => {
+    if (resendTimer > 0 || loading) return;
+    setErrorMsg('');
+    setSuccessMsg('');
+    setLoading(true);
+
+    try {
+      const data = await apiFetch('/api/auth/resend-verification', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: email.trim().toLowerCase()
+        })
+      });
+
+      if (data && data.success) {
+        setOtpDigits(['', '', '', '', '', '']);
+        setResendTimer(data.resendCooldownSeconds || 60);
+        setSuccessMsg(data.message || 'A new verification code has been sent to your email.');
+        showToast('New verification code sent!', 'success');
+        otpInputRefs[0]?.current?.focus();
+      } else {
+        const msg = data?.message || 'Failed to resend verification code.';
+        setErrorMsg(msg);
+        showToast(msg, 'error');
+      }
+    } catch (err) {
+      setErrorMsg('Server connection error.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 6. Forgot Password Handler
   const handleForgotPassword = async (e) => {
     if (e) e.preventDefault();
     if (loading) return;
@@ -190,10 +341,9 @@ export default function AuthPage() {
 
       if (data && data.success) {
         setSuccessMsg(data.message || 'Password reset instructions have been generated.');
-        showToast('Password reset link generated.', 'success');
+        showToast('Password reset instructions generated.', 'success');
         if (data.resetToken) {
           setResetToken(data.resetToken);
-          // Transition directly to reset password entry for smooth experience
           setTimeout(() => {
             setMode('reset');
           }, 1200);
@@ -209,7 +359,7 @@ export default function AuthPage() {
     }
   };
 
-  // 4. Reset Password Handler
+  // 7. Reset Password Handler
   const handleResetPassword = async (e) => {
     if (e) e.preventDefault();
     if (loading) return;
@@ -312,6 +462,7 @@ export default function AuthPage() {
           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '4px' }}>
             {mode === 'signin' && 'Sign in to access your pure dairy dashboard'}
             {mode === 'register' && 'Create your account in the HealthyMilk network'}
+            {mode === 'verify_email' && 'Verify your email address to activate your account'}
             {mode === 'forgot' && 'Reset your account password securely'}
             {mode === 'reset' && 'Set a new secure password'}
           </p>
@@ -814,11 +965,11 @@ export default function AuthPage() {
             >
               {loading ? (
                 <>
-                  <Loader2 size={18} className="pulse-anim" /> Creating Account...
+                  <Loader2 size={18} className="pulse-anim" /> Sending Code...
                 </>
               ) : (
                 <>
-                  Create Account <ArrowRight size={18} />
+                  Create Account & Send Code <ArrowRight size={18} />
                 </>
               )}
             </button>
@@ -838,7 +989,136 @@ export default function AuthPage() {
         )}
 
         {/* ==================================================== */}
-        {/* VIEW 3: FORGOT PASSWORD */}
+        {/* VIEW 3: VERIFY EMAIL OTP */}
+        {/* ==================================================== */}
+        {mode === 'verify_email' && (
+          <form onSubmit={handleVerifyEmail} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            <div style={{
+              background: 'var(--accent-emerald-light)',
+              border: '1px solid var(--accent-emerald)',
+              borderRadius: '16px',
+              padding: '1rem',
+              textAlign: 'center'
+            }}>
+              <div style={{ fontSize: '0.74rem', fontWeight: 800, color: 'var(--accent-emerald)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                ✉️ Email Verification Required
+              </div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '4px' }}>
+                {maskedEmail || email}
+              </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px', lineHeight: '1.4' }}>
+                We sent a 6-digit verification code to your email address. Enter the code below to verify and activate your HealthyMilk account.
+              </p>
+            </div>
+
+            {/* 6 Auto-Advancing Segmented OTP Boxes */}
+            <div>
+              <label style={{ fontSize: '0.78rem', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '0.5rem', textAlign: 'center' }}>
+                Enter 6-Digit Verification Code
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 'clamp(4px, 1.5vw, 8px)' }}>
+                {otpDigits.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    ref={otpInputRefs[idx]}
+                    aria-label={`Digit ${idx + 1}`}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="one-time-code"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleOtpBoxChange(idx, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                    onPaste={handleOtpPaste}
+                    style={{
+                      width: '100%',
+                      height: 'clamp(44px, 11vw, 54px)',
+                      borderRadius: 'clamp(8px, 2vw, 12px)',
+                      border: digit ? '2px solid var(--accent-emerald)' : '1px solid var(--border-color)',
+                      background: 'var(--bg-primary)',
+                      color: 'var(--text-main)',
+                      fontSize: 'clamp(1.1rem, 4.5vw, 1.35rem)',
+                      fontWeight: 800,
+                      textAlign: 'center',
+                      padding: 0,
+                      boxShadow: digit ? '0 0 0 3px rgba(16, 185, 129, 0.15)' : 'none',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Actions: Change Email & Resend Code */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem' }}>
+              <button
+                type="button"
+                onClick={() => switchMode('register')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                  cursor: 'pointer',
+                  padding: 0
+                }}
+              >
+                <ArrowLeft size={15} /> Change Details
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResendOtp}
+                disabled={resendTimer > 0 || loading}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: resendTimer > 0 ? 'var(--text-muted)' : 'var(--accent-emerald)',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  cursor: resendTimer > 0 ? 'not-allowed' : 'pointer',
+                  padding: 0
+                }}
+              >
+                <RotateCcw size={14} /> {resendTimer > 0 ? `Resend in ${resendTimer}s` : 'Resend Code'}
+              </button>
+            </div>
+
+            {/* Verify Email Submit */}
+            <button
+              type="submit"
+              disabled={loading || otpDigits.join('').length !== 6}
+              className="btn-primary"
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                padding: '0.9rem',
+                fontSize: '0.95rem',
+                fontWeight: 700,
+                borderRadius: '12px'
+              }}
+            >
+              {loading ? (
+                <>
+                  <Loader2 size={18} className="pulse-anim" /> Verifying Code...
+                </>
+              ) : (
+                <>
+                  Verify Email & Open Dashboard <ShieldCheck size={18} />
+                </>
+              )}
+            </button>
+          </form>
+        )}
+
+        {/* ==================================================== */}
+        {/* VIEW 4: FORGOT PASSWORD */}
         {/* ==================================================== */}
         {mode === 'forgot' && (
           <form onSubmit={handleForgotPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
@@ -930,7 +1210,7 @@ export default function AuthPage() {
         )}
 
         {/* ==================================================== */}
-        {/* VIEW 4: RESET PASSWORD */}
+        {/* VIEW 5: RESET PASSWORD */}
         {/* ==================================================== */}
         {mode === 'reset' && (
           <form onSubmit={handleResetPassword} style={{ display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
