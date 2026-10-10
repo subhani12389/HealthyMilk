@@ -26,6 +26,7 @@ export default function AuthPage() {
   const [maskedEmail, setMaskedEmail] = useState('');
   const [otpDigits, setOtpDigits] = useState(['', '', '', '', '', '']);
   const [resendTimer, setResendTimer] = useState(0);
+  const [devOtp, setDevOtp] = useState('');
   const otpInputRefs = [useRef(null), useRef(null), useRef(null), useRef(null), useRef(null), useRef(null)];
 
   // Password Reset State
@@ -128,6 +129,7 @@ export default function AuthPage() {
       } else if (data && data.unverified) {
         // Account exists but email is not verified -> prompt OTP verification
         setMaskedEmail(data.maskedEmail || email.trim());
+        if (data.devOtp) setDevOtp(data.devOtp);
         setResendTimer(60);
         showToast('Please verify your email address to continue.', 'warning');
         setMode('verify_email');
@@ -188,6 +190,7 @@ export default function AuthPage() {
 
       if (data && data.success) {
         setMaskedEmail(data.maskedEmail || cleanEmail);
+        if (data.devOtp) setDevOtp(data.devOtp);
         setResendTimer(data.resendCooldownSeconds || 60);
         setOtpDigits(['', '', '', '', '', '']);
         setSuccessMsg(data.message || `We sent a verification code to ${data.maskedEmail || cleanEmail}`);
@@ -300,6 +303,7 @@ export default function AuthPage() {
 
       if (data && data.success) {
         setOtpDigits(['', '', '', '', '', '']);
+        if (data.devOtp) setDevOtp(data.devOtp);
         setResendTimer(data.resendCooldownSeconds || 60);
         setSuccessMsg(data.message || 'A new verification code has been sent to your email.');
         showToast('New verification code sent!', 'success');
@@ -1010,6 +1014,45 @@ export default function AuthPage() {
                 We sent a 6-digit verification code to your email address. Enter the code below to verify and activate your HealthyMilk account.
               </p>
             </div>
+
+            {/* Dev Mode OTP Banner (for local testing without SMTP configuration) */}
+            {devOtp && (
+              <div style={{
+                background: 'rgba(245, 158, 11, 0.12)',
+                border: '1px dashed var(--accent-amber)',
+                borderRadius: '12px',
+                padding: '0.65rem 0.9rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontSize: '0.82rem'
+              }}>
+                <div>
+                  <span style={{ fontWeight: 800, color: 'var(--accent-amber)' }}>⚡ Dev OTP: </span>
+                  <span style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: '1.1rem', letterSpacing: '2px', color: 'var(--text-main)' }}>{devOtp}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const digits = devOtp.split('').slice(0, 6);
+                    setOtpDigits(digits);
+                    showToast('OTP auto-filled!', 'info');
+                  }}
+                  style={{
+                    background: 'var(--accent-amber)',
+                    color: '#fff',
+                    border: 'none',
+                    borderRadius: '8px',
+                    padding: '4px 10px',
+                    fontSize: '0.75rem',
+                    fontWeight: 800,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Auto Fill
+                </button>
+              </div>
+            )}
 
             {/* 6 Auto-Advancing Segmented OTP Boxes */}
             <div>

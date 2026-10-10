@@ -228,7 +228,8 @@ router.post('/register', authLimiter, async (req, res) => {
       maskedEmail: displayMaskedEmail,
       expiresSeconds: 300,
       resendCooldownSeconds: 60,
-      emailDelivery: emailResult.providerStatus
+      emailDelivery: emailResult.providerStatus,
+      devOtp: emailResult.devOtp || undefined
     });
 
   } catch (err) {
@@ -485,7 +486,8 @@ router.post('/resend-verification', authLimiter, async (req, res) => {
       maskedEmail: displayMasked,
       expiresSeconds: 300,
       resendCooldownSeconds: 60,
-      emailDelivery: emailResult.providerStatus
+      emailDelivery: emailResult.providerStatus,
+      devOtp: emailResult.devOtp || undefined
     });
 
   } catch (err) {

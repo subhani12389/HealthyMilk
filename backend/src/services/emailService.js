@@ -1,4 +1,10 @@
 const https = require('https');
+let nodemailer;
+try {
+  nodemailer = require('nodemailer');
+} catch (e) {
+  nodemailer = null;
+}
 
 // Test-mode inbox store for automated testing assertions
 const testDeliveredEmails = new Map();
@@ -113,13 +119,18 @@ async function sendVerificationEmail({ toEmail, otp, name = 'HealthyMilk User' }
       success: true,
       provider: 'mock',
       providerStatus: 'delivered_to_test_inbox',
+      devOtp: otp,
       deliveryDurationMs: Number(process.hrtime.bigint() - startedAt) / 1e6
     };
   }
 
   const resendApiKey = process.env.RESEND_API_KEY;
   const sendgridApiKey = process.env.SENDGRID_API_KEY;
-  const emailFrom = process.env.EMAIL_FROM || 'HealthyMilk <onboarding@resend.dev>';
+  const smtpUser = process.env.SMTP_USER || process.env.GMAIL_USER;
+  const smtpPass = process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || process.env.GMAIL_PASS;
+  const smtpHost = process.env.SMTP_HOST || (smtpUser && smtpUser.includes('@gmail.com') ? 'smtp.gmail.com' : '');
+  const smtpPort = Number(process.env.SMTP_PORT || (smtpHost === 'smtp.gmail.com' ? 465 : 587));
+  const emailFrom = process.env.EMAIL_FROM || (smtpUser ? `HealthyMilk <${smtpUser}>` : 'HealthyMilk <onboarding@resend.dev>');
 
   // 1. Resend.com Provider
   if (resendApiKey) {
@@ -249,12 +260,55 @@ async function sendVerificationEmail({ toEmail, otp, name = 'HealthyMilk User' }
     });
   }
 
-  // 3. Fallback when no provider credentials configured in local development
-  console.info(`[Email Service - Dev Fallback] OTP for ${cleanEmail}: ${otp}`);
+  // 3. SMTP / Gmail Provider (Nodemailer)
+  if (nodemailer && smtpUser && smtpPass && (smtpHost || smtpUser.includes('@gmail.com'))) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtpHost || 'smtp.gmail.com',
+        port: smtpPort,
+        secure: smtpPort === 465,
+        auth: {
+          user: smtpUser,
+          pass: smtpPass
+        }
+      });
+
+      const info = await transporter.sendMail({
+        from: emailFrom,
+        to: cleanEmail,
+        subject: `Your HealthyMilk Verification Code: ${otp}`,
+        text: renderVerificationEmailText({ name, otp, expiresMinutes }),
+        html: renderVerificationEmailHtml({ name, otp, expiresMinutes })
+      });
+
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
+      console.log(`[Email Service - SMTP] Sent verification OTP to ${cleanEmail}. MessageId: ${info.messageId}`);
+      return {
+        success: true,
+        provider: 'smtp',
+        providerStatus: 'sent_via_smtp',
+        messageId: info.messageId,
+        deliveryDurationMs: durationMs
+      };
+    } catch (smtpErr) {
+      console.error('SMTP Email Send Error:', smtpErr.message);
+      // Fall through to dev console so the user is never stuck
+    }
+  }
+
+  // 4. Fallback when no provider credentials configured in local development
+  console.info(`\n===============================================================`);
+  console.info(`🥛 [HealthyMilk Email Service] Dev Verification Code`);
+  console.info(`   To: ${cleanEmail}`);
+  console.info(`   Code: ${otp}`);
+  console.info(`   (To send real emails, set RESEND_API_KEY or SMTP_USER & SMTP_PASS in backend/.env)`);
+  console.info(`===============================================================\n`);
+
   return {
     success: true,
     provider: 'dev_console',
     providerStatus: 'logged_to_server_console',
+    devOtp: otp,
     deliveryDurationMs: Number(process.hrtime.bigint() - startedAt) / 1e6
   };
 }
