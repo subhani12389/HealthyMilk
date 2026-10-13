@@ -65,9 +65,9 @@ async function performApiFetch(endpoint, options = {}) {
     }
   }
 
-  // AbortController with 8-second timeout to prevent permanently hung requests
+  // AbortController with 20-second timeout to allow for serverless cold-starts and prevent false network timeouts
   const controller = new AbortController();
-  const timeoutMs = timeout || 8000;
+  const timeoutMs = timeout || 20000;
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const abortFromCaller = () => controller.abort(callerSignal.reason);
   if (callerSignal?.aborted) abortFromCaller();

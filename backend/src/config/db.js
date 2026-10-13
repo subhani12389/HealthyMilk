@@ -31,6 +31,15 @@ async function connectDB() {
   if (cached.promise) return cached.promise;
 
   const mongoURI = process.env.MONGODB_URI || process.env.DATABASE_URL;
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const isLocalhost = !mongoURI || mongoURI.includes('127.0.0.1') || mongoURI.includes('localhost');
+
+  if (isServerless && isLocalhost) {
+    cached.lastError = 'Production Vercel deployment requires a cloud MongoDB URI (e.g. MongoDB Atlas). Localhost (127.0.0.1) cannot be reached from serverless functions. Please set MONGODB_URI in Vercel project environment variables.';
+    console.error(cached.lastError);
+    throw new Error(cached.lastError);
+  }
+
   if (!mongoURI) {
     cached.lastError = 'MONGODB_URI is required. Configure a MongoDB connection string before starting HealthyMilk.';
     throw new Error(cached.lastError);
@@ -38,9 +47,9 @@ async function connectDB() {
 
   const isAtlas = mongoURI.includes('mongodb+srv://') || mongoURI.includes('.mongodb.net');
   const connectOptions = {
-    serverSelectionTimeoutMS: 10000,
-    connectTimeoutMS: 10000,
-    socketTimeoutMS: 20000,
+    serverSelectionTimeoutMS: 5000,
+    connectTimeoutMS: 5000,
+    socketTimeoutMS: 15000,
     maxPoolSize: 10,
     minPoolSize: 1,
     autoIndex: true
