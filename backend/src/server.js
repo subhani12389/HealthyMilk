@@ -91,9 +91,14 @@ app.get('/', (req, res) => {
   });
 });
 
-// All application APIs require the persistent database; never fall through to demo stores.
-app.use('/api', (req, res, next) => {
+// All application APIs require the persistent database; auto-connect for serverless invocations.
+app.use('/api', async (req, res, next) => {
   if (req.path === '/health') return next();
+  if (!databaseStatus().connected) {
+    try {
+      await connectDB();
+    } catch (e) {}
+  }
   if (!databaseStatus().connected) return requireDatabase(req, res, next);
   if (!jwtSecretConfigured) {
     return res.status(503).json({
