@@ -45,29 +45,38 @@ const configuredCorsOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim())
   .filter(Boolean);
+const corsOrigins = process.env.NODE_ENV === 'production'
+  ? (configuredCorsOrigins.length ? configuredCorsOrigins : ['https://healthymilk.vercel.app', 'https://healthy-milk.vercel.app'])
+  : (configuredCorsOrigins.length ? configuredCorsOrigins : '*');
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production'
-    ? configuredCorsOrigins
-    : configuredCorsOrigins.length ? configuredCorsOrigins : '*',
+  origin: corsOrigins,
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Idempotency-Key']
 };
 if (process.env.NODE_ENV === 'production' && configuredCorsOrigins.length === 0) {
-  console.error('CORS_ORIGINS must list trusted frontend origins in production; browser API requests will be denied.');
+  console.info('CORS_ORIGINS defaults to production domains https://healthymilk.vercel.app, https://healthy-milk.vercel.app');
 }
 app.use(cors(corsOptions));
-
 app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Health Check & Root Endpoints
-app.get('/api/health', (req, res) => {
+app.get('/api/health', async (req, res) => {
+  if (!databaseStatus().connected) {
+    try {
+      await connectDB();
+    } catch (e) {
+      console.warn('DB connect on /api/health failed:', e.message);
+    }
+  }
   const database = databaseStatus();
   res.json({
     server: 'ok',
     database: database.connected ? 'connected' : 'disconnected',
     databaseState: database.state,
+    databaseDetails: database.error || null,
     status: 'online',
     app: 'HealthyMilk Production API',
     smsConfigured: smsConfiguration.configured,
@@ -97,7 +106,9 @@ app.use('/api', async (req, res, next) => {
   if (!databaseStatus().connected) {
     try {
       await connectDB();
-    } catch (e) {}
+    } catch (e) {
+      console.error('Database connection error on API request:', e.message);
+    }
   }
   if (!databaseStatus().connected) return requireDatabase(req, res, next);
   if (!jwtSecretConfigured) {
@@ -107,7 +118,7 @@ app.use('/api', async (req, res, next) => {
       message: 'Authentication requires a JWT secret of at least 32 bytes.'
     });
   }
-  return requireDatabase(req, res, next);
+  return next();
 });
 
 // API Routes

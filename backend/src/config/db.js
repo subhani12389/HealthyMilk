@@ -9,7 +9,10 @@ mongoose.connection.on('error', (error) => {
   console.error(`MongoDB connection error: ${error.message}`);
 });
 
-let connectionPromise;
+let cached = global._mongooseConnection;
+if (!cached) {
+  cached = global._mongooseConnection = { conn: null, promise: null, lastError: null };
+}
 let transactionSupportPromise;
 
 class TransactionsUnavailableError extends Error {
@@ -21,43 +24,52 @@ class TransactionsUnavailableError extends Error {
 }
 
 async function connectDB() {
-  if (mongoose.connection.readyState === 1) return mongoose.connection;
-  if (connectionPromise) return connectionPromise;
+  if (mongoose.connection.readyState === 1) {
+    cached.conn = mongoose.connection;
+    return mongoose.connection;
+  }
+  if (cached.promise) return cached.promise;
 
   const mongoURI = process.env.MONGODB_URI || process.env.DATABASE_URL;
   if (!mongoURI) {
-    throw new Error('MONGODB_URI is required. Configure a MongoDB connection before starting HealthyMilk.');
+    cached.lastError = 'MONGODB_URI is required. Configure a MongoDB connection string before starting HealthyMilk.';
+    throw new Error(cached.lastError);
   }
 
   const isAtlas = mongoURI.includes('mongodb+srv://') || mongoURI.includes('.mongodb.net');
   const connectOptions = {
-    serverSelectionTimeoutMS: 5000,
-    connectTimeoutMS: 5000,
-    socketTimeoutMS: 10000,
+    serverSelectionTimeoutMS: 10000,
+    connectTimeoutMS: 10000,
+    socketTimeoutMS: 20000,
     maxPoolSize: 10,
     minPoolSize: 1,
     autoIndex: true
   };
   if (isAtlas) {
-    connectOptions.serverApi = { version: '1', strict: true, deprecationErrors: true };
+    connectOptions.serverApi = { version: '1', strict: false, deprecationErrors: true };
   }
 
-  connectionPromise = mongoose.connect(mongoURI, connectOptions).then((connection) => {
+  cached.promise = mongoose.connect(mongoURI, connectOptions).then((connection) => {
+    cached.conn = connection.connection;
+    cached.lastError = null;
     console.log(`MongoDB connected successfully: ${connection.connection.host}/${connection.connection.name}`);
     return connection.connection;
   }).catch((error) => {
-    connectionPromise = null;
+    cached.promise = null;
+    cached.conn = null;
+    cached.lastError = error.message;
     console.error(`MongoDB connection failed: ${error.message}`);
     throw error;
   });
 
-  return connectionPromise;
+  return cached.promise;
 }
 
 function databaseStatus() {
   return {
     connected: mongoose.connection.readyState === 1,
-    state: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState] || 'unknown'
+    state: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState] || 'unknown',
+    error: cached.lastError || null
   };
 }
 
@@ -66,7 +78,8 @@ function requireDatabase(req, res, next) {
   return res.status(503).json({
     success: false,
     code: 'DATABASE_UNAVAILABLE',
-    message: 'The service is temporarily unavailable because the database is not connected.'
+    message: 'The service is temporarily unavailable because the database is not connected.',
+    details: cached.lastError || (!process.env.MONGODB_URI ? 'MONGODB_URI environment variable is not configured.' : 'Database connection could not be established.')
   });
 }
 
