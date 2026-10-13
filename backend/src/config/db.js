@@ -84,7 +84,7 @@ async function withMongoTransaction(work) {
       });
   }
   const hasTx = await transactionSupportPromise;
-  const allowStandalone = process.env.ALLOW_STANDALONE_TRANSACTIONS === 'true' || process.env.ALLOW_STANDALONE_WRITES === 'true';
+  const allowStandalone = process.env.ALLOW_STANDALONE_TRANSACTIONS !== 'false' && process.env.ALLOW_STANDALONE_WRITES !== 'false';
 
   if (!hasTx) {
     if (allowStandalone) {
