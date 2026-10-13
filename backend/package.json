@@ -4,6 +4,7 @@
   "description": "HealthyMilk REST API Server - Express and Node.js with MongoDB Integration",
   "main": "src/server.js",
   "scripts": {
+    "build": "node -e \"console.log('backend ready')\"",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "reset-data": "node scripts/resetData.js"
