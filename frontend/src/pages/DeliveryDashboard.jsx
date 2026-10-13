@@ -480,7 +480,7 @@ export default function DeliveryDashboard() {
       )}
 
       {/* TAB 2: BATCH HISTORY */}
-      {activeTab === 'batches' && (
+      {(activeTab === 'batches' || activeTab === 'history') && (
         <div className="card">
           <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '1.25rem' }}>All Collected & Tested Batches</h3>
           {batches.length === 0 ? (
@@ -539,7 +539,7 @@ export default function DeliveryDashboard() {
       )}
 
       {/* TAB 3: COMMISSION WALLET */}
-      {activeTab === 'wallet' && (
+      {(activeTab === 'wallet' || activeTab === 'balance') && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div className="grid-responsive-2">
             <div className="card">
@@ -607,6 +607,53 @@ export default function DeliveryDashboard() {
                 />
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 4: SETTINGS & ROUTE */}
+      {activeTab === 'settings' && (
+        <div className="card">
+          <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '0.5rem' }}>Agent Profile & Route Settings</h3>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+            Your delivery vehicle details, assigned territory, and field contact credentials.
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1.25rem' }}>
+            <div style={{ padding: '1.1rem', borderRadius: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Full Name</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)', marginTop: '4px' }}>
+                {agentProfile?.name || user?.name}
+              </div>
+            </div>
+
+            <div style={{ padding: '1.1rem', borderRadius: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Registered Email</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)', marginTop: '4px' }}>
+                {agentProfile?.email || user?.email}
+              </div>
+            </div>
+
+            <div style={{ padding: '1.1rem', borderRadius: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Assigned Delivery Route</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--accent-amber)', marginTop: '4px' }}>
+                {agentProfile?.assignedArea || user?.assignedArea || 'Sector 14 & Green Valley'}
+              </div>
+            </div>
+
+            <div style={{ padding: '1.1rem', borderRadius: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Assigned Vehicle No.</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)', marginTop: '4px' }}>
+                {agentProfile?.vehicleNo || user?.vehicleNo || 'GJ-07-MK-4421'}
+              </div>
+            </div>
+
+            <div style={{ padding: '1.1rem', borderRadius: '12px', background: 'var(--bg-primary)', border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Account Role</div>
+              <div style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--accent-amber)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <ShieldCheck size={18} /> Authorized Delivery Agent
+              </div>
+            </div>
           </div>
         </div>
       )}

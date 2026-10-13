@@ -54,13 +54,34 @@ export default function Sidebar() {
     { id: 'settings', label: 'Platform Controls', icon: Settings }
   ];
 
-  const navItems = user.role === 'admin' 
+  const userRole = (user.role || '').toLowerCase().trim();
+  const isAgent = userRole === 'delivery_agent' || userRole === 'agent' || userRole === 'delivery' || userRole.includes('agent');
+  const isFarmer = userRole === 'farmer' || userRole.includes('farm');
+  const isAdmin = userRole === 'admin';
+
+  const navItems = isAdmin 
     ? adminItems 
-    : user.role === 'farmer' 
+    : isFarmer 
       ? farmerItems 
-      : user.role === 'consumer' 
-        ? consumerItems 
-        : agentItems;
+      : isAgent 
+        ? agentItems 
+        : consumerItems;
+
+  const roleLabel = isAdmin 
+    ? 'ADMIN' 
+    : isFarmer 
+      ? 'FARMER' 
+      : isAgent 
+        ? 'AGENT' 
+        : 'CONSUMER';
+
+  const roleBadgeColor = isAdmin
+    ? '#6366F1'
+    : isFarmer
+      ? 'var(--accent-emerald)'
+      : isAgent
+        ? 'var(--accent-amber)'
+        : 'var(--accent-blue)';
 
   const handleNavClick = (id) => {
     setActiveTab(id);
@@ -124,10 +145,10 @@ export default function Sidebar() {
                 Logged in as
               </div>
               <div style={{ fontWeight: 800, fontSize: '0.92rem', color: 'var(--text-main)', marginTop: '2px', wordBreak: 'break-word' }}>
-                {user.role === 'farmer' ? (user.farmName || user.name) : user.name}
+                {isFarmer ? (user.farmName || user.name) : user.name}
               </div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--accent-emerald)', fontWeight: 600, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                <ShieldCheck size={13} /> Verified {user.role.toUpperCase()}
+              <div style={{ fontSize: '0.72rem', color: roleBadgeColor, fontWeight: 700, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                <ShieldCheck size={13} /> Verified {roleLabel}
               </div>
             </div>
 
@@ -140,7 +161,7 @@ export default function Sidebar() {
               padding: '0 0.5rem 0.5rem',
               letterSpacing: '0.05em'
             }}>
-              {user.role === 'admin' ? 'Admin Operations Portal' : user.role === 'farmer' ? 'Farmer Dashboard' : user.role === 'consumer' ? 'Consumer Portal' : 'Delivery Agent Portal'}
+              {isAdmin ? 'Admin Operations Portal' : isFarmer ? 'Farmer Dashboard' : isAgent ? 'Delivery Agent Portal' : 'Consumer Portal'}
             </div>
 
             {/* Navigation Items */}

@@ -723,7 +723,7 @@ export default function FarmerDashboard() {
       )}
 
       {/* TAB 4: WALLET & PAYOUTS */}
-      {activeTab === 'wallet' && (
+      {(activeTab === 'wallet' || activeTab === 'balance') && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
           <div className="grid-responsive-2">
             <div className="card" style={{ background: 'linear-gradient(135deg, var(--bg-card) 0%, var(--bg-card-hover) 100%)' }}>

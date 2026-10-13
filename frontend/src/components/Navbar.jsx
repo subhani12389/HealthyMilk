@@ -68,14 +68,36 @@ export default function Navbar() {
     }
   };
 
-  const roleColors = {
-    admin: { bg: 'rgba(99, 102, 241, 0.15)', text: '#6366F1', label: '🛡️ Admin' },
-    farmer: { bg: 'var(--accent-emerald-light)', text: 'var(--accent-emerald)', label: '🌾 Farmer' },
-    consumer: { bg: 'var(--accent-blue-light)', text: 'var(--accent-blue)', label: '🥛 Consumer' },
-    agent: { bg: 'var(--accent-amber-light)', text: 'var(--accent-amber)', label: '🚚 Agent' }
+  const getRoleConfig = (role) => {
+    const r = (role || '').toLowerCase().trim();
+    if (r === 'admin') {
+      return { bg: 'rgba(99, 102, 241, 0.15)', text: '#6366F1', label: '🛡️ Admin' };
+    }
+    if (r === 'farmer' || r.includes('farm')) {
+      return { bg: 'var(--accent-emerald-light)', text: 'var(--accent-emerald)', label: '🌾 Farmer' };
+    }
+    if (r === 'agent' || r === 'delivery' || r === 'delivery_agent' || r.includes('agent') || r.includes('deliv')) {
+      return { bg: 'var(--accent-amber-light)', text: 'var(--accent-amber)', label: '🚚 Agent' };
+    }
+    return { bg: 'var(--accent-blue-light)', text: 'var(--accent-blue)', label: '🥛 Consumer' };
   };
 
-  const currentRoleConfig = user ? (roleColors[user.role] || roleColors.consumer) : roleColors.consumer;
+  const getProfileSubtext = (u) => {
+    if (!u) return 'HealthyMilk Member';
+    const r = (u.role || '').toLowerCase().trim();
+    if (r === 'admin') {
+      return '🛡️ System Administrator';
+    }
+    if (r === 'farmer' || r.includes('farm')) {
+      return u.farmName || (u.name ? `${u.name}'s Dairy Farm` : '🌾 Organic Dairy Farm');
+    }
+    if (r === 'agent' || r === 'delivery' || r === 'delivery_agent' || r.includes('agent') || r.includes('deliv')) {
+      return u.assignedArea ? `🚚 Route: ${u.assignedArea}` : (u.vehicleNo ? `🚚 Vehicle: ${u.vehicleNo}` : '🚚 Verified Delivery Agent');
+    }
+    return u.address ? `🥛 ${u.address}` : '🥛 Verified Consumer';
+  };
+
+  const currentRoleConfig = user ? getRoleConfig(user.role) : getRoleConfig('consumer');
 
   return (
     <header style={{
@@ -371,7 +393,7 @@ export default function Navbar() {
                     fontWeight: 700,
                     display: 'inline-block'
                   }}>
-                    {user.farmName || user.address || user.assignedArea || 'HealthyMilk Member'}
+                    {getProfileSubtext(user)}
                   </div>
                 </div>
 
